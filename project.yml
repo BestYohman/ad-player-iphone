@@ -1,0 +1,39 @@
+# XcodeGen turns this into the Xcode project on GitHub's Mac (you never need a Mac yourself).
+name: ADPlayer
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  ADPlayer:
+    type: application
+    platform: iOS
+    sources:
+      - ADPlayer
+    info:
+      path: ADPlayer/Info.plist
+      properties:
+        CFBundleDisplayName: AD Player
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes: [audio]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIRequiresFullScreen: true
+        NSLocalNetworkUsageDescription: AD Player connects to your media PC at home to play shows and movies with audio description.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.home.adplayer
+        PRODUCT_NAME: ADPlayer
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        ENABLE_BITCODE: NO
