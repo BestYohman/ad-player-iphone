@@ -1,0 +1,58 @@
+# Builds the iPhone app on one of GitHub's Macs every time a file changes (or when you press "Run workflow").
+# The finished app (ADPlayer.ipa) appears under Releases as "AD Player (latest)", ready for AltStore.
+name: Build the iPhone app
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Make the Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project ADPlayer.xcodeproj -target ADPlayer -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
+          test -d build/Release-iphoneos/ADPlayer.app
+
+      - name: List the errors (copy these to Claude)
+        if: failure()
+        run: |
+          {
+            echo "## Build errors - copy everything in the box below"
+            echo '```'
+            grep -E "error:" build.log | sed -e "s#$PWD/##" | sort -u | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Make ADPlayer.ipa
+        run: |
+          mkdir -p out/Payload
+          cp -R build/Release-iphoneos/ADPlayer.app out/Payload/
+          cd out && zip -qr ../ADPlayer.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ADPlayer
+          path: ADPlayer.ipa
+
+      - name: Put it under Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest ADPlayer.ipa --title "AD Player (latest)" --notes "Built $(date -u '+%Y-%m-%d %H:%M') UTC from ${GITHUB_SHA::7}. On the iPhone: download ADPlayer.ipa below, then in AltStore go to My Apps, press +, and choose it."
