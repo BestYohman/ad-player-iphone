@@ -32,7 +32,6 @@ final class PhonePlayer: ObservableObject {
     private var didStart = false
 
     init() {
-        setUpRemoteControls()
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             // after a phone call or Siri: carry on if iOS says to
             guard let info = note.userInfo,
@@ -40,7 +39,10 @@ final class PhonePlayer: ObservableObject {
                   AVAudioSession.InterruptionType(rawValue: raw) == .ended,
                   let optionsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt,
                   AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume) else { return }
-            Task { @MainActor in self?.player?.play() }
+            Task { @MainActor in
+                guard let self = self, self.active else { return }
+                self.player?.play()
+            }
         }
     }
 
@@ -237,7 +239,7 @@ final class PhonePlayer: ObservableObject {
         active = false
         preparing = false
         paused = false
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if wasActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         if wasActive && !quiet { say("Stopped.") }
         if wasActive && notify { onEnded() }
     }
@@ -317,44 +319,6 @@ final class PhonePlayer: ObservableObject {
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(p.rate)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
-    }
-
-    /// Lock screen, Control Center and headphone buttons.
-    private func setUpRemoteControls() {
-        let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.play() }
-            return .success
-        }
-        c.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.pause(quiet: true) }
-            return .success
-        }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.togglePause(quiet: true) }
-            return .success
-        }
-        c.skipForwardCommand.preferredIntervals = [30]
-        c.skipForwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.skip(30, quiet: true) }
-            return .success
-        }
-        c.skipBackwardCommand.preferredIntervals = [30]
-        c.skipBackwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.skip(-30, quiet: true) }
-            return .success
-        }
-        c.nextTrackCommand.isEnabled = false
-        c.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.next() }
-            return .success
-        }
-        c.previousTrackCommand.isEnabled = false
-        c.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            let t = e.positionTime
-            Task { @MainActor in self?.seek(to: t, quiet: true) }
-            return .success
-        }
+        MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = false
     }
 }

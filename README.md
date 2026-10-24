@@ -7,6 +7,10 @@ A small iPhone app for the AD Player in `describealign_ultimate.py`. It can:
 - Play with audio description and resume where she left off.
 - Control the TV, or play on the phone with lock-screen controls.
 - Go to the next episode, and say where she is ("Where am I?").
+- Play audiobooks from Audiobookshelf, through the PC: Continue listening, All books, Series, Authors and Search.
+  - On the phone: chapters, speed, a sleep timer and the lock-screen controls. Her place is saved to Audiobookshelf.
+  - Or on the TV that's listed as "DLNA with audio description".
+  - The audiobook parts only appear once Audiobookshelf is set up in the admin page's Settings.
 
 It talks to the PC on port 5021, the same as the AD Player web page.
 
@@ -58,6 +62,7 @@ AltServer runs on the PC that is always on, which is the one running describeali
 - **The 7-day refresh is automatic** while three things are true: the iPhone and the PC are on the home Wi-Fi, AltServer is running, and iTunes Wi-Fi sync is on. AltStore's **My Apps** shows how many days are left, and **Refresh All** does it right away.
 - **If the app ever won't open,** it has expired. Open AltStore and press **Refresh All** while she's at home. Her settings and place are kept.
 - **Updates:** upload the changed files to GitHub the same way (they replace the old ones), and wait for the green tick. Then install the new `ADPlayer.ipa` with AltStore's **+**. Settings are kept.
+  - For the audiobooks update (version 1.1): upload the whole `ADPlayer` folder (it has a new file, `BookPlayer.swift`), `project.yml` and `README.md`.
 - **Free Apple ID limit:** 3 sideloaded apps per phone, and AltStore counts as one.
 
 ## If the .github folder didn't upload

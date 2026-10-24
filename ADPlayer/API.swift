@@ -164,14 +164,112 @@ struct TVStatus: Decodable {
     let title: String?
     let posTicks: Double?
     let runTicks: Double?
+    // when an audiobook is playing on the TV
+    let book: Bool?
+    let bookID: String?
+    let hasPrev: Bool?
+    let sleepVal: String?
 
     enum CodingKeys: String, CodingKey {
-        case playing, paused, text, ad, title
+        case playing, paused, text, ad, title, book
         case hasAD = "has_ad"
         case hasNext = "has_next"
         case posTicks = "pos_ticks"
         case runTicks = "run_ticks"
+        case bookID = "book_id"
+        case hasPrev = "has_prev"
+        case sleepVal = "sleep_val"
     }
+}
+
+// MARK: - Audiobooks (from Audiobookshelf, through the PC)
+
+/// One row of an audiobook list: a book, a series, an author or a chapter.
+struct BookItem: Decodable, Identifiable, Hashable {
+    let id: String
+    let type: String
+    let label: String
+    let author: String?
+    let narrator: String?
+    let series: String?
+    let length: String?
+    let chapters: Int?
+    let resume: String?
+    let pct: Int?
+    let finished: Bool?
+    let count: Int?
+    let book: String?
+    let bookTitle: String?
+    let start: Double?
+    let at: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, label, author, narrator, series, length, chapters, resume, pct, finished, count, book, start, at
+        case bookTitle = "book_title"
+    }
+
+    var canResume: Bool { !(resume ?? "").isEmpty }
+
+    /// What VoiceOver reads, worded like the web page:
+    /// "The Hobbit, by J.R.R. Tolkien, read by Andy Serkis, 10 hours 25 minutes, 35 percent done, resumes at 3 hours 2 minutes"
+    var spoken: String {
+        switch type {
+        case "BookSeries", "BookAuthor":
+            guard let n = count, n > 0 else { return label }
+            return "\(label), \(Speak.count(n, "book"))"
+        case "Chapter":
+            let number = (Int(id.split(separator: "|").last ?? "") ?? 0) + 1
+            let lower = label.lowercased()
+            let name = (lower.hasPrefix("chapter") || lower.hasPrefix("part")) ? label : "Chapter \(number): \(label)"
+            return name + (at.map { ", starts at \($0)" } ?? "")
+        default:
+            var parts = [label]
+            if let a = author, !a.isEmpty { parts.append("by \(a)") }
+            if let n = narrator, !n.isEmpty { parts.append("read by \(n)") }
+            if let s = series, !s.isEmpty { parts.append(s) }
+            if let l = length, !l.isEmpty { parts.append(l) }
+            if canResume {
+                parts.append(((pct ?? 0) > 0 ? "\(pct ?? 0) percent done, " : "") + "resumes at \(resume ?? "")")
+            } else if finished == true {
+                parts.append("finished")
+            }
+            return parts.joined(separator: ", ")
+        }
+    }
+}
+
+struct BookItemsResponse: Decodable {
+    let items: [BookItem]
+}
+
+struct BookChapter: Decodable, Hashable {
+    let start: Double
+    let end: Double
+    let title: String
+}
+
+/// One file of a book. url plays the file as it is; tx is the PC's MP3 version (add ?t=seconds).
+struct BookTrack: Decodable, Hashable {
+    let start: Double
+    let duration: Double
+    let ino: String
+    let mime: String?
+    let codec: String?
+    let url: String
+    let tx: String
+}
+
+struct BookDetail: Decodable {
+    let id: String
+    let title: String
+    let author: String?
+    let narrator: String?
+    let duration: Double
+    let chapters: [BookChapter]
+    let tracks: [BookTrack]
+    let position: Double
+    let finished: Bool
+    let cover: String?
 }
 
 struct ListenJob: Decodable {
