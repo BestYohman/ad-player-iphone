@@ -13,12 +13,15 @@ targets:
       path: ADPlayer/Info.plist
       properties:
         CFBundleDisplayName: AD Player
-        CFBundleShortVersionString: "1.2"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.3"
+        CFBundleVersion: "4"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UIBackgroundModes: [audio]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.home.adplayer
+            CFBundleURLSchemes: [adplayer]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIRequiresFullScreen: true
         NSLocalNetworkUsageDescription: AD Player connects to your media PC at home to play shows and movies with audio description, and audiobooks.

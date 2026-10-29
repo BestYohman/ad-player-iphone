@@ -19,6 +19,8 @@ struct RootView: View {
         .onChange(of: phase) { newPhase in
             model.scene(active: newPhase == .active)
         }
+        // adplayer://join - from a "play together" notification: show the Join button straight away
+        .onOpenURL { _ in Task { await model.together.pollInvites() } }
         .onAppear { model.scene(active: true) }
     }
 }
@@ -57,6 +59,16 @@ struct SetupView: View {
                     Section { Text(note) }
                 }
                 if !first {
+                    Section {
+                        Picker("Headphone delay when playing together", selection: Binding(get: { model.together.delayChoice },
+                                                                                        set: { model.together.delayChoice = $0 })) {
+                            ForEach(Together.delays, id: \.0) { d in
+                                Text(d.1).tag(d.0)
+                            }
+                        }
+                    } footer: {
+                        Text("Auto asks iPhone how late the headphones are (AirPods are about 0.2 seconds), so both of you hear it at the same moment.")
+                    }
                     Section {
                         Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through the address above.")
                         if let name = model.me?.name, !name.isEmpty, !model.needSignIn {

@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 /// Playing together: one person starts a show, movie or audiobook with "Play together" on, and the other
 /// gets a Join button. Every second this phone tells the PC where it is; the PC keeps the one clock both
@@ -230,7 +231,8 @@ final class Together: ObservableObject {
     private func sync(_ r: Room) {
         let base = (r.rate ?? 1) > 0 ? (r.rate ?? 1) : 1
         let run = r.run ?? false
-        let target = (r.pos ?? 0) + (run ? rtt / 2 * base : 0)
+        // a little ahead by how late this phone's sound reaches her ears (Bluetooth headphones), so both hear it together
+        let target = (r.pos ?? 0) + (run ? rtt / 2 * base : 0) + outputDelay * base
         let diff = mediaTime - target
         let lead = min(5, seekCost) * base
         if run {
@@ -251,6 +253,21 @@ final class Together: ObservableObject {
             if mediaRate != 0 { pause() }
             if abs(diff) > 0.25 { seek(target) }
         }
+    }
+
+    // MARK: headphone delay
+
+    static let delays: [(String, String)] = [("auto", "Auto"), ("0", "None"), ("0.1", "0.1 seconds"), ("0.2", "0.2 seconds"),
+                                            ("0.3", "0.3 seconds"), ("0.4", "0.4 seconds"), ("0.5", "0.5 seconds")]
+    @Published var delayChoice: String = UserDefaults.standard.string(forKey: "hpDelay") ?? "auto" {
+        didSet { UserDefaults.standard.set(delayChoice, forKey: "hpDelay") }
+    }
+
+    /// Seconds this phone's sound is late: Auto asks iPhone (AirPods and other Bluetooth headphones are about 0.2 s).
+    var outputDelay: Double {
+        if let v = Double(delayChoice) { return v }
+        let l = AVAudioSession.sharedInstance().outputLatency
+        return l.isFinite ? min(0.5, max(0, l)) : 0
     }
 
     // MARK: buttons (on screen, lock screen and headphones)
