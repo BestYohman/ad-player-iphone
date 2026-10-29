@@ -12,6 +12,14 @@ A small iPhone app for the AD Player in `describealign_ultimate.py`. It can:
   - Or on the TV that's listed as "DLNA with audio description".
   - The audiobook parts only appear once Audiobookshelf is set up in the admin page's Settings.
 
+- Version 1.2:
+  - She signs in once with her Emby user name and password (the phone stays signed in).
+  - At home it connects straight to the PC; away from home it uses the web address typed in.
+  - Play together: a Join button appears when someone starts something with Play together on; with Play together on
+    here, what she starts also plays on the other phone. The buttons, lock screen and headphones work for both phones.
+  - The audio is downloaded to the phone in the background while it plays, and when the connection drops it carries
+    on by itself from the same place.
+
 It talks to the PC on port 5021, the same as the AD Player web page.
 
 The app is built on GitHub's Macs, so no Mac is needed. It is installed with AltStore using a free Apple ID, and AltStore re-signs it every 7 days.
