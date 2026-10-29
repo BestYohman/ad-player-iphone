@@ -3,8 +3,10 @@ import AVFoundation
 import MediaPlayer
 
 /// "Listen on this phone": plays just the audio description track, using Apple's own player.
-/// It streams from the PC a little at a time (nothing is downloaded ahead of time), keeps playing
-/// with the screen locked, and works with the lock screen, Control Center, headphones and AirPlay.
+/// It starts streaming from the PC straight away, and meanwhile downloads the whole track to the phone;
+/// once that's done it plays from the phone itself, so a weak signal or a change of network doesn't matter.
+/// If the connection drops before that, it tries again by itself from the same place.
+/// Keeps playing with the screen locked, and works with the lock screen, Control Center, headphones and AirPlay.
 @MainActor
 final class PhonePlayer: ObservableObject {
     @Published private(set) var active = false        // something is loaded: getting ready, playing or paused
@@ -15,21 +17,34 @@ final class PhonePlayer: ObservableObject {
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var hasNext = false
+    @Published private(set) var hasAD = true
+    @Published private(set) var reconnecting = false
 
     var api: @MainActor () -> API? = { nil }
     var say: @MainActor (String) -> Void = { _ in }
     var onEnded: @MainActor () -> Void = {}
+    /// Set while playing together: the end of an episode goes to the shared clock instead of straight to the next one.
+    var togetherEnded: (@MainActor () -> Void)?
 
     private var player: AVPlayer?
     private var itemID: String?
+    private var jobID: String?
+    private var mediaPath: String?                    // the stream on the PC
+    private var localFile: URL?                       // the whole track, once it's on the phone
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
     private var controlObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    private var failObserver: NSObjectProtocol?
     private var lastSave = Date.distantPast
     private var startTask: Task<Void, Never>?
+    private var wholeTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
     private var generation = 0
     private var didStart = false
+    private var retries = 0
+    private var together = false
+    private var pendingStart: Double = 0
 
     init() {
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -40,7 +55,7 @@ final class PhonePlayer: ObservableObject {
                   let optionsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt,
                   AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume) else { return }
             Task { @MainActor in
-                guard let self = self, self.active else { return }
+                guard let self = self, self.active, !self.together else { return }
                 self.player?.play()
             }
         }
@@ -51,9 +66,21 @@ final class PhonePlayer: ObservableObject {
         if preparing {
             return progress > 0 ? "Getting the audio of \(title) ready… \(progress) percent." : "Getting the audio of \(title) ready…"
         }
+        if reconnecting { return "The connection dropped - carrying on as soon as it's back. \(title)." }
         let start = "\(paused ? "Paused" : "Playing") on this phone: \(title)."
         return duration > 0 ? start + " \(Speak.position(position)) of \(Speak.duration(duration))." : start
     }
+
+    /// Ready to play (for playing together).
+    var ready: Bool { active && didStart && !preparing && player != nil }
+
+    /// Waiting for more of the audio to arrive.
+    var buffering: Bool {
+        guard let p = player, didStart else { return false }
+        return p.timeControlStatus == .waitingToPlayAtSpecifiedRate || reconnecting
+    }
+
+    var currentItemID: String? { itemID }
 
     func currentTime() -> Double {
         let t = player?.currentTime().seconds ?? position
@@ -62,31 +89,37 @@ final class PhonePlayer: ObservableObject {
 
     // MARK: starting
 
-    func start(_ item: Item, resume: Bool) {
+    /// together: the place to get ready at, without playing (the shared clock says when).
+    func start(_ item: Item, resume: Bool, together startAt: Double? = nil) {
         stop(saving: true, quiet: true, notify: false)
         guard let api = api() else { return }
         generation += 1
         let gen = generation
+        together = startAt != nil
         configureAudioSession()
         active = true
         preparing = true
         progress = 0
         title = item.label
-        paused = false
+        paused = startAt != nil
         position = 0
         duration = 0
         hasNext = item.type == "Episode"
+        hasAD = true
         itemID = item.id
-        say("Getting the audio of \(item.label) ready.")
+        if !together { say("Getting the audio of \(item.label) ready.") }
 
         startTask = Task { [weak self] in
             do {
-                var job = try await api.post("api/play/listen/prepare", ["item": item.id, "fmt": "hls"], as: ListenJob.self)
+                var job = try await api.post("api/play/listen/prepare",
+                                             ["item": item.id, "fmt": "hls", "any": startAt != nil ? "1" : "0"], as: ListenJob.self)
                 guard let self = self, gen == self.generation else { return }
-                let resumeAt = resume ? (job.resumeTicks ?? 0) / 10_000_000 : 0
+                let resumeAt = startAt ?? (resume ? (job.resumeTicks ?? 0) / 10_000_000 : 0)
                 self.title = job.title ?? item.label
                 self.duration = (job.runtimeTicks ?? 0) / 10_000_000
                 self.hasNext = job.hasNext ?? self.hasNext
+                self.hasAD = job.hasAD ?? true
+                self.jobID = job.id
                 // The PC makes the audio in small pieces; playing can start once the first ones exist
                 // (or, when carrying on part way through, once it has got past that point).
                 while true {
@@ -100,7 +133,10 @@ final class PhonePlayer: ObservableObject {
                     guard gen == self.generation else { return }
                 }
                 guard let path = job.url, let url = api.media(path) else { throw APIError.server("Couldn't get the audio ready.") }
-                self.begin(url: url, at: resumeAt > 5 ? resumeAt : 0, gen: gen)
+                self.mediaPath = path
+                let at = startAt ?? (resumeAt > 5 ? resumeAt : 0)
+                self.begin(url: url, at: at, gen: gen, play: startAt == nil, announce: startAt == nil)
+                self.fetchWhole(gen: gen)
             } catch is CancellationError {
                 return
             } catch {
@@ -112,17 +148,18 @@ final class PhonePlayer: ObservableObject {
         }
     }
 
-    private func begin(url: URL, at start: Double, gen: Int) {
+    private func begin(url: URL, at start: Double, gen: Int, play: Bool, announce: Bool) {
+        pendingStart = start
         let item = AVPlayerItem(url: url)
-        // Ask for about 10 minutes loaded ahead, so skipping forward is instant. Playing still starts
-        // as soon as a few seconds are ready; the rest loads in the background. (iOS may load less if it needs the memory.)
+        // Ask for about 10 minutes loaded ahead, so skipping and a weak signal don't stop it.
         item.preferredForwardBufferDuration = 600
+        item.audioTimePitchAlgorithm = .timeDomain
         let p = AVPlayer(playerItem: item)
         p.allowsExternalPlayback = true
         player = p
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
             let status = observed.status
-            Task { @MainActor in self?.itemStatusChanged(status, gen: gen, start: start) }
+            Task { @MainActor in self?.itemStatusChanged(status, gen: gen, start: start, play: play, announce: announce) }
         }
         controlObservation = p.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
             let status = observed.timeControlStatus
@@ -131,30 +168,39 @@ final class PhonePlayer: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.finished() }
         }
+        failObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lostConnection(gen: gen) }
+        }
         timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] time in
             let seconds = time.seconds
             Task { @MainActor in self?.tick(seconds) }
         }
     }
 
-    private func itemStatusChanged(_ status: AVPlayerItem.Status, gen: Int, start: Double) {
+    private func itemStatusChanged(_ status: AVPlayerItem.Status, gen: Int, start: Double, play: Bool, announce: Bool) {
         guard gen == generation, let p = player else { return }
         if status == .failed {
+            if retries < 60 && localFile == nil { lostConnection(gen: gen); return }
             stop(saving: false, quiet: true, notify: true)
             say("This phone couldn't play the audio.")
             return
         }
         guard status == .readyToPlay, !didStart else { return }
-        didStart = true
-        p.seek(to: CMTime(seconds: start, preferredTimescale: 600)) { [weak self] _ in
+        p.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in
                 guard let self = self, gen == self.generation else { return }
+                self.didStart = true
                 self.preparing = false
+                if self.reconnecting { self.say("Back again.") }
+                self.reconnecting = false
+                self.retries = 0
                 self.position = start
-                self.player?.play()
+                if play { self.player?.play() }
                 self.updateNowPlaying()
-                let from = start > 0 ? " from \(Speak.position(start))" : ""
-                self.say("Playing \(self.title) on this phone\(from), with audio description.")
+                if announce {
+                    let from = start > 0 ? " from \(Speak.position(start))" : ""
+                    self.say("Playing \(self.title) on this phone\(from)" + (self.hasAD ? ", with audio description." : "."))
+                }
             }
         }
     }
@@ -168,6 +214,83 @@ final class PhonePlayer: ObservableObject {
         guard seconds.isFinite, didStart else { return }
         position = seconds
         if player?.timeControlStatus == .playing && Date().timeIntervalSince(lastSave) > 30 { save(finished: false) }
+    }
+
+    // MARK: staying up when the connection drops
+
+    /// Builds the player again at the same place, from the phone's own copy if there is one, else from the PC.
+    private func reload(play: Bool) {
+        guard active, let api = api() else { return }
+        let at = didStart ? currentTime() : pendingStart
+        let url: URL?
+        if let f = localFile { url = f } else if let path = mediaPath { url = api.media(path) } else { url = nil }
+        guard let url = url else { return }
+        generation += 1
+        let gen = generation
+        tearDown()
+        position = at
+        begin(url: url, at: at, gen: gen, play: play, announce: false)
+    }
+
+    private func lostConnection(gen: Int) {
+        guard gen == generation, active, retryTask == nil else { return }
+        let wasPlaying = !paused || (player?.rate ?? 0) != 0
+        retries += 1
+        if !reconnecting && !together { say("The connection dropped - carrying on as soon as it's back.") }
+        reconnecting = true
+        let wait = UInt64(min(10, retries)) * 1_000_000_000
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: wait)
+            guard let self = self else { return }
+            self.retryTask = nil
+            guard self.active, self.reconnecting else { return }
+            self.reload(play: wasPlaying && !self.together)
+        }
+    }
+
+    /// The phone found a network again: don't wait for the next try.
+    func networkBack() {
+        guard active, reconnecting else { return }
+        retryTask?.cancel()
+        retryTask = nil
+        reload(play: !together)
+    }
+
+    /// The PC's address changed (home Wi-Fi / away): carry on from the same place at the new address.
+    func rebase() {
+        guard active, !preparing, didStart, localFile == nil else { return }
+        reload(play: (player?.rate ?? 0) != 0)
+    }
+
+    /// Downloads the whole track in the background, then plays from the phone's copy.
+    private func fetchWhole(gen: Int) {
+        wholeTask?.cancel()
+        guard let id = jobID else { return }
+        wholeTask = Task { [weak self] in
+            var tries = 0
+            while tries < 900 {
+                tries += 1
+                guard let self = self, self.active, self.jobID == id, let api = self.api() else { return }
+                if let job = try? await api.get("api/play/listen/job/\(id)", as: ListenJob.self) {
+                    if job.state == "failed" { return }
+                    if let full = job.fullURL, let url = api.media(full),
+                       let file = await Downloads.get(url, name: "\(id).m4a") {
+                        guard self.active, self.jobID == id else { return }
+                        self.useLocal(file)
+                        return
+                    }
+                }
+                try? await Task.sleep(nanoseconds: tries < 30 ? 4_000_000_000 : 15_000_000_000)
+                if Task.isCancelled { return }
+            }
+        }
+    }
+
+    private func useLocal(_ file: URL) {
+        guard localFile == nil else { return }
+        localFile = file
+        if !didStart || preparing { return }                       // it starts from the copy when it's ready
+        reload(play: (player?.rate ?? 0) != 0)
     }
 
     // MARK: buttons
@@ -191,8 +314,17 @@ final class PhonePlayer: ObservableObject {
 
     func play() {
         guard let p = player, didStart else { return }
+        if reconnecting { networkBack(); return }
         p.play()
     }
+
+    /// Playing together: plays at this speed (a little faster or slower evens out small differences).
+    func play(rate: Double) {
+        guard let p = player, didStart else { return }
+        p.rate = Float(rate)
+    }
+
+    var rate: Double { Double(player?.rate ?? 0) }
 
     func skip(_ by: Double, quiet: Bool = false) {
         guard didStart else { return }
@@ -234,11 +366,21 @@ final class PhonePlayer: ObservableObject {
         generation += 1
         startTask?.cancel()
         startTask = nil
+        wholeTask?.cancel()
+        wholeTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         tearDown()
         itemID = nil
+        jobID = nil
+        mediaPath = nil
+        localFile = nil
         active = false
         preparing = false
         paused = false
+        reconnecting = false
+        retries = 0
+        together = false
         if wasActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         if wasActive && !quiet { say("Stopped.") }
         if wasActive && notify { onEnded() }
@@ -254,6 +396,7 @@ final class PhonePlayer: ObservableObject {
     private func finished() {
         guard let id = itemID else { return }
         save(finished: true)
+        if together, let ended = togetherEnded { ended(); return }
         let done = title
         let lookForNext = hasNext
         let gen = generation
@@ -298,6 +441,8 @@ final class PhonePlayer: ObservableObject {
         controlObservation = nil
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         endObserver = nil
+        if let f = failObserver { NotificationCenter.default.removeObserver(f) }
+        failObserver = nil
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         player = nil
@@ -313,12 +458,57 @@ final class PhonePlayer: ObservableObject {
     private func updateNowPlaying() {
         guard let p = player, didStart else { return }
         var info: [String: Any] = [MPMediaItemPropertyTitle: title,
-                                   MPMediaItemPropertyArtist: "Audio description"]
+                                   MPMediaItemPropertyArtist: hasAD ? "Audio description" : "Soundtrack"]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime()
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(p.rate)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
         MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = false
+    }
+}
+
+/// The whole audio tracks kept on the phone (the last four).
+enum Downloads {
+    private static var folder: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let f = base.appendingPathComponent("listen", isDirectory: true)
+        try? FileManager.default.createDirectory(at: f, withIntermediateDirectories: true)
+        return f
+    }
+
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 60
+        c.timeoutIntervalForResource = 3600
+        return URLSession(configuration: c)
+    }()
+
+    /// Downloads url as name (or finds it already there). Nil if it didn't finish (tried again later).
+    static func get(_ url: URL, name: String) async -> URL? {
+        let dest = folder.appendingPathComponent(name)
+        if let size = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber, size.intValue > 1000 {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: dest.path)
+            return dest
+        }
+        var request = URLRequest(url: url)
+        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
+        guard let result = try? await session.download(for: request),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        try? FileManager.default.removeItem(at: dest)
+        guard (try? FileManager.default.moveItem(at: result.0, to: dest)) != nil else { return nil }
+        prune()
+        return dest
+    }
+
+    private static func prune() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let sorted = files.filter { $0.pathExtension == "m4a" }.sorted {
+            let a = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let b = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return a > b
+        }
+        for f in sorted.dropFirst(4) { try? fm.removeItem(at: f) }
     }
 }

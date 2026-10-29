@@ -7,10 +7,12 @@ enum APIError: LocalizedError {
     case server(String)
     case badAddress
     case network
+    case signIn(String)
 
     var errorDescription: String? {
         switch self {
         case .server(let message): return message
+        case .signIn(let message): return message
         case .badAddress: return "The address of the PC doesn't look right. Check it in Settings."
         case .network: return "Couldn't reach the PC. Is it turned on, and is this phone on the home Wi-Fi?"
         }
@@ -19,6 +21,26 @@ enum APIError: LocalizedError {
 
 struct API {
     let base: URL
+
+    /// This phone's sign-in (from the PC, after signing in with the Emby user name and password). Sent with every request.
+    static var token: String = Keychain.get("token") ?? ""
+    /// Called when the PC says to sign in (again).
+    static var signInNeeded: (@MainActor () -> Void)?
+
+    private static let quick: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 2.5
+        c.timeoutIntervalForResource = 3
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c)
+    }()
+
+    /// Asks quickly whether the PC is at this address (used to find it on the home Wi-Fi). Nil if it didn't answer.
+    func quickMe() async -> Me? {
+        guard let result = try? await API.quick.data(from: url("api/play/me")),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? JSONDecoder().decode(Me.self, from: result.0)
+    }
 
     /// "192.168.1.20" or "192.168.1.20:5021" or "http://mypc:5021/play" -> http://192.168.1.20:5021
     static func normalise(_ text: String) -> URL? {
@@ -59,12 +81,15 @@ struct API {
     }
 
     func get<T: Decodable>(_ path: String, _ query: [String: String?] = [:], as type: T.Type) async throws -> T {
-        try await send(URLRequest(url: url(path, query)), as: type)
+        var request = URLRequest(url: url(path, query))
+        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
+        return try await send(request, as: type)
     }
 
     func post<T: Decodable>(_ path: String, _ form: [String: String], as type: T.Type) async throws -> T {
         var request = URLRequest(url: url(path))
         request.httpMethod = "POST"
+        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
         request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
         var body = URLComponents()
         body.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -83,6 +108,12 @@ struct API {
             throw APIError.network
         }
         let data = result.0
+        if let http = result.1 as? HTTPURLResponse, http.statusCode == 401 {
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let message = (object?["error"] as? String) ?? "Please sign in."
+            if let hook = API.signInNeeded { Task { @MainActor in hook() } }
+            throw APIError.signIn(message)
+        }
         if let http = result.1 as? HTTPURLResponse, http.statusCode >= 400 {
             throw APIError.server("The PC answered with an error (\(http.statusCode)). Is the AD Player port turned on in the app's settings?")
         }
@@ -100,6 +131,76 @@ struct API {
 }
 
 // MARK: - What the PC sends back
+
+/// Who is signed in on this phone, and about the PC.
+struct Me: Decodable {
+    let signedIn: Bool?
+    let name: String?
+    let role: String?
+    let away: Bool?
+    let loginNeeded: Bool?
+    let serverID: String?
+    let homeURLs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case name, role, away
+        case signedIn = "signed_in"
+        case loginNeeded = "login_needed"
+        case serverID = "server_id"
+        case homeURLs = "home_urls"
+    }
+}
+
+struct LoginResponse: Decodable {
+    let message: String
+    let token: String?
+}
+
+/// Playing together: what the PC says about the shared clock.
+struct Room: Decodable {
+    let id: String?
+    let kind: String?
+    let item: String?
+    let title: String?
+    let iseq: Int?
+    let run: Bool?
+    let want: Bool?
+    let waiting: Bool?
+    let hold: [String]?
+    let pos: Double?
+    let rate: Double?
+    let runtime: Double?
+    let hasNext: Bool?
+    let by: String?
+    let role: String?
+    let msg: String?
+    let msgBy: String?
+    let msgSeq: Int?
+    let others: [String]?
+    let notReady: [String]?
+    let gone: Bool?
+    let left: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, item, title, iseq, run, want, waiting, hold, pos, rate, runtime, by, role, msg, others, gone, left
+        case hasNext = "has_next"
+        case msgBy = "msg_by"
+        case msgSeq = "msg_seq"
+        case notReady = "not_ready"
+    }
+}
+
+struct Invite: Decodable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let by: String
+    let kind: String
+    let names: [String]?
+}
+
+struct InvitesResponse: Decodable {
+    let rooms: [Invite]
+}
 
 struct Device: Decodable, Identifiable, Hashable {
     let id: String
@@ -284,9 +385,13 @@ struct ListenJob: Decodable {
     let encodedSeconds: Double?
     let playable: Bool?
     let url: String?
+    let fullURL: String?
+    let hasAD: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, state, progress, error, title, playable, url
+        case fullURL = "full_url"
+        case hasAD = "has_ad"
         case runtimeTicks = "runtime_ticks"
         case resumeTicks = "resume_ticks"
         case hasNext = "has_next"

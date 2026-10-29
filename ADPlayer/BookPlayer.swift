@@ -25,9 +25,13 @@ final class BookPlayer: ObservableObject {
     @Published private(set) var sleepChoice = "off"
     @Published private(set) var speed: Double = BookPlayer.savedSpeed()
 
+    @Published private(set) var reconnecting = false
+
     var api: @MainActor () -> API? = { nil }
     var say: @MainActor (String) -> Void = { _ in }
     var onEnded: @MainActor () -> Void = {}
+    /// Set while listening together: the end of the book goes to the shared clock.
+    var togetherEnded: (@MainActor () -> Void)?
 
     nonisolated static let speeds: [Double] = [0.75, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
     nonisolated static let sleepChoices: [SleepChoice] = [
@@ -54,6 +58,10 @@ final class BookPlayer: ObservableObject {
     private var artwork: MPMediaItemArtwork?
     private var chapterShown = -2
     private var startTask: Task<Void, Never>?
+    private var failObserver: NSObjectProtocol?
+    private var retryTask: Task<Void, Never>?
+    private var retries = 0
+    private var together = false
 
     init() {
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -132,6 +140,24 @@ final class BookPlayer: ObservableObject {
         return found
     }
 
+    /// Ready to play (for listening together).
+    var ready: Bool { active && !preparing && !switching && player != nil }
+
+    /// Waiting for more of the book to arrive.
+    var buffering: Bool {
+        guard let p = player, active, !preparing else { return false }
+        return switching || reconnecting || p.timeControlStatus == .waitingToPlayAtSpecifiedRate
+    }
+
+    var rate: Double { Double(player?.rate ?? 0) }
+
+    /// Listening together: plays at this speed (the shared speed, a little faster or slower to keep in step).
+    func play(rate r: Double) {
+        guard active, !preparing, let p = player else { return }
+        p.defaultRate = Float(r)
+        p.rate = Float(r)
+    }
+
     var hasNextChapter: Bool {
         guard !chapters.isEmpty else { return false }
         return (chapterIndex(currentTime()) ?? -1) < chapters.count - 1
@@ -154,8 +180,9 @@ final class BookPlayer: ObservableObject {
     // MARK: starting
 
     /// at: start here (seconds into the book), e.g. a chapter. Otherwise her place when resume is true.
-    func start(id: String, label: String, resume: Bool, at: Double?) {
-        if active && !preparing && bookID == id, let at = at {          // a chapter of the book that's playing
+    /// noplay: get ready at that place without playing (listening together: the shared clock says when).
+    func start(id: String, label: String, resume: Bool, at: Double?, noplay: Bool = false) {
+        if !noplay && active && !preparing && bookID == id, let at = at {          // a chapter of the book that's playing
             seek(to: at)
             if paused { play() }
             say(chapterSentence(at) ?? "Playing from \(Speak.position(at)).")
@@ -182,7 +209,10 @@ final class BookPlayer: ObservableObject {
         sleepChoice = "off"
         artwork = nil
         chapterShown = -2
-        say("Getting \(label) ready.")
+        together = noplay
+        retries = 0
+        reconnecting = false
+        if !noplay { say("Getting \(label) ready.") }
 
         startTask = Task { [weak self] in
             do {
@@ -209,7 +239,7 @@ final class BookPlayer: ObservableObject {
                     Task { @MainActor in self?.tick() }
                 }
                 let i = self.partIndex(pos)
-                self.load(i, pos - self.tracks[i].start, play: true, announce: true)
+                self.load(i, pos - self.tracks[i].start, play: !noplay, announce: !noplay)
                 if let cover = b.cover { self.loadArtwork(api.media(cover), gen: gen) }
             } catch is CancellationError {
                 return
@@ -240,6 +270,8 @@ final class BookPlayer: ObservableObject {
         statusObservation = nil
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         endObserver = nil
+        if let f = failObserver { NotificationCenter.default.removeObserver(f) }
+        failObserver = nil
         let item = AVPlayerItem(url: url)
         item.audioTimePitchAlgorithm = .timeDomain
         if direct { item.preferredForwardBufferDuration = 300 }
@@ -252,12 +284,19 @@ final class BookPlayer: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.partEnded(lg) }
         }
+        failObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lostConnection(lg) }
+        }
         p.replaceCurrentItem(with: item)
     }
 
     private func itemStatusChanged(_ status: AVPlayerItem.Status, lg: Int, index: Int, offset: Double, direct: Bool, play: Bool, announce: Bool) {
         guard lg == loadGeneration, let p = player else { return }
         if status == .failed {
+            if BookPlayer.isNetwork(p.currentItem?.error) && retries < 60 {   // the connection: try again shortly
+                lostConnection(lg)
+                return
+            }
             if direct {                                   // try the PC's MP3 of this part instead
                 forceTx.insert(index)
                 load(index, offset, play: play, announce: announce)
@@ -282,6 +321,9 @@ final class BookPlayer: ObservableObject {
         guard lg == loadGeneration, let p = player else { return }
         switching = false
         preparing = false
+        if reconnecting { say("Back again.") }
+        reconnecting = false
+        retries = 0
         if play {
             p.defaultRate = Float(speed)
             p.play()
@@ -302,9 +344,56 @@ final class BookPlayer: ObservableObject {
             return
         }
         save(finished: true)
+        if together, let ended = togetherEnded { ended(); return }
         let done = title
         stop(saving: false, quiet: true, notify: true)
         say("Finished \(done).")
+    }
+
+    // MARK: staying up when the connection drops
+
+    nonisolated static func isNetwork(_ error: Error?) -> Bool {
+        guard let e = error as NSError? else { return false }
+        if e.domain == NSURLErrorDomain { return true }
+        if let u = e.userInfo[NSUnderlyingErrorKey] as? NSError, u.domain == NSURLErrorDomain { return true }
+        return false
+    }
+
+    private func lostConnection(_ lg: Int) {
+        guard lg == loadGeneration, active, retryTask == nil else { return }
+        let wasPlaying = (player?.rate ?? 0) != 0 || !paused
+        retries += 1
+        if !reconnecting && !together { say("The connection dropped - carrying on as soon as it's back.") }
+        reconnecting = true
+        let wait = UInt64(min(10, retries)) * 1_000_000_000
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: wait)
+            guard let self = self else { return }
+            self.retryTask = nil
+            guard self.active, self.reconnecting else { return }
+            self.reloadHere(play: wasPlaying && !self.together)
+        }
+    }
+
+    /// Loads the part that's playing again, from the same place (and the PC's address as it is now).
+    private func reloadHere(play: Bool) {
+        guard active, !tracks.isEmpty, part < tracks.count else { return }
+        let pos = switching ? tracks[part].start + pendingOffset : currentTime()
+        load(part, pos - tracks[part].start, play: play)
+    }
+
+    /// The phone found a network again: don't wait for the next try.
+    func networkBack() {
+        guard active, reconnecting else { return }
+        retryTask?.cancel()
+        retryTask = nil
+        reloadHere(play: !together)
+    }
+
+    /// The PC's address changed (home Wi-Fi / away): carry on at the new address.
+    func rebase() {
+        guard active, !preparing else { return }
+        reloadHere(play: (player?.rate ?? 0) != 0)
     }
 
     private func controlChanged(_ status: AVPlayer.TimeControlStatus) {
@@ -355,6 +444,7 @@ final class BookPlayer: ObservableObject {
 
     func play() {
         guard active, !preparing, let p = player else { return }
+        if reconnecting { networkBack(); return }
         p.defaultRate = Float(speed)
         p.play()
     }
@@ -446,7 +536,11 @@ final class BookPlayer: ObservableObject {
         loadGeneration += 1
         startTask?.cancel()
         startTask = nil
+        retryTask?.cancel()
+        retryTask = nil
         tearDown()
+        reconnecting = false
+        together = false
         active = false
         preparing = false
         paused = false
@@ -485,6 +579,8 @@ final class BookPlayer: ObservableObject {
         controlObservation = nil
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
         endObserver = nil
+        if let f = failObserver { NotificationCenter.default.removeObserver(f) }
+        failObserver = nil
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         player = nil

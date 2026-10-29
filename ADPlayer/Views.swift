@@ -10,6 +10,8 @@ struct RootView: View {
         Group {
             if model.api == nil {
                 SetupView(first: true)
+            } else if model.needSignIn {
+                SignInView()
             } else {
                 HomeView()
             }
@@ -45,7 +47,7 @@ struct SetupView: View {
                 } header: {
                     Text("Address of the PC")
                 } footer: {
-                    Text("The same address as the AD Player web page: the PC's address and port 5021. The first time, iPhone asks to find devices on your local network - choose Allow.")
+                    Text("The same address as the AD Player web page: the PC's address and port 5021, or your web address for away from home. At home the app finds the PC by itself. The first time, iPhone asks to find devices on your local network - choose Allow.")
                 }
                 Section {
                     Button(busy ? "Connecting…" : "Connect") { connect() }
@@ -53,6 +55,15 @@ struct SetupView: View {
                 }
                 if !note.isEmpty {
                     Section { Text(note) }
+                }
+                if !first {
+                    Section {
+                        Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through the address above.")
+                        if let name = model.me?.name, !name.isEmpty, !model.needSignIn {
+                            Text("Signed in as \(name).")
+                            Button("Sign out") { model.signOut(); dismiss() }
+                        }
+                    }
                 }
             }
             .navigationTitle(first ? "Set up AD Player" : "Settings")
@@ -86,6 +97,68 @@ struct SetupView: View {
     }
 }
 
+// MARK: - Signing in
+
+struct SignInView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var user = ""
+    @State private var password = ""
+    @State private var busy = false
+    @State private var note = ""
+    @State private var showSetup = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("User name", text: $user)
+                        .textContentType(.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("Password", text: $password)
+                        .textContentType(.password)
+                        .submitLabel(.go)
+                        .onSubmit { go() }
+                } header: {
+                    Text("Your Emby user name and password")
+                } footer: {
+                    Text("The same as for Emby. The phone stays signed in.")
+                }
+                Section {
+                    Button(busy ? "Signing in…" : "Sign in") { go() }
+                        .disabled(busy || user.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if !note.isEmpty {
+                    Section { Text(note) }
+                }
+                Section {
+                    Button("Change the address of the PC") { showSetup = true }
+                }
+            }
+            .navigationTitle("Sign in")
+            .sheet(isPresented: $showSetup) {
+                SetupView(first: false).environmentObject(model)
+            }
+        }
+    }
+
+    private func go() {
+        guard !busy else { return }
+        let u = user.trimmingCharacters(in: .whitespaces)
+        guard !u.isEmpty else { return }
+        busy = true
+        note = ""
+        Task {
+            let problem = await model.signIn(user: u, password: password)
+            busy = false
+            if let problem = problem {
+                note = problem
+                model.announce(problem)
+            }
+        }
+    }
+}
+
 // MARK: - Home: where to play, carry on, find something
 
 struct HomeView: View {
@@ -95,6 +168,8 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             List {
+                InvitesSection(together: model.together)
+
                 Section {
                     Picker("Play on", selection: $model.target) {
                         Text(AppModel.phoneName).tag(AppModel.phoneID)
@@ -106,9 +181,19 @@ struct HomeView: View {
                     Button("Refresh the TV list") {
                         Task { await model.refreshDevices(announce: true) }
                     }
+                    if model.isPhone {
+                        Toggle("Play together", isOn: Binding(get: { model.together.enabled },
+                                                              set: { model.together.enabled = $0
+                                                                     model.announce($0 ? "Play together is on. What you start now also plays on the other person's phone once they join." : "Play together is off.") }))
+                    }
                 } footer: {
-                    if !model.otherDevices.isEmpty {
-                        Text("Connected but can't be controlled from here: \(model.otherDevices.joined(separator: ", ")). Use the Emby app on that TV instead.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        if model.isPhone {
+                            Text("Play together: what you start here also plays on another person's phone, in step. They get a Join button.")
+                        }
+                        if !model.otherDevices.isEmpty {
+                            Text("Connected but can't be controlled from here: \(model.otherDevices.joined(separator: ", ")). Use the Emby app on that TV instead.")
+                        }
                     }
                 }
 
@@ -172,6 +257,22 @@ struct HomeView: View {
     }
 }
 
+/// "Bob wants to play … together" with a Join button, at the top of Home.
+struct InvitesSection: View {
+    @ObservedObject var together: Together
+
+    var body: some View {
+        if !together.active && !together.invites.isEmpty {
+            Section("Play together") {
+                ForEach(together.invites) { inv in
+                    Button("Join \(inv.by): \(inv.title)") { together.join(inv) }
+                        .accessibilityHint("\(inv.by) wants to \(inv.kind == "book" ? "listen to" : "play") it together.")
+                }
+            }
+        }
+    }
+}
+
 /// "Now playing: …" at the top of Home, to get back to the controls.
 struct NowPlayingRow: View {
     @EnvironmentObject var model: AppModel
@@ -187,6 +288,7 @@ struct NowPlayingRow: View {
     }
 
     private var nowTitle: String? {
+        if model.together.active { return model.together.room?.title ?? "playing together" }
         if model.isPhone {
             if book.active { return book.title }
             return phone.active ? phone.title : nil
@@ -332,6 +434,22 @@ struct NowPlayingView: View {
     var body: some View {
         NavigationStack {
             List {
+                if model.together.active {
+                    TogetherControls(together: model.together, book: book)
+                } else {
+                    soloControls
+                }
+                Section {
+                    Button("Where am I?") { model.whereAmI() }
+                    Button("Find something else") { model.showPlayer = false }
+                }
+            }
+            .navigationTitle("Now playing")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    @ViewBuilder private var soloControls: some View {
                 Section {
                     Text(statusText)
                         .accessibilityAddTraits(.updatesFrequently)
@@ -345,14 +463,6 @@ struct NowPlayingView: View {
                 } else {
                     tvControls
                 }
-                Section {
-                    Button("Where am I?") { model.whereAmI() }
-                    Button("Find something else") { model.showPlayer = false }
-                }
-            }
-            .navigationTitle("Now playing")
-            .navigationBarTitleDisplayMode(.inline)
-        }
     }
 
     private var statusText: String {
@@ -453,6 +563,42 @@ struct NowPlayingView: View {
         Section("TV volume") {
             Button("Volume down") { model.tv("voldown") }
             Button("Volume up") { model.tv("volup") }
+        }
+    }
+}
+
+/// The buttons while playing together: they work the shared clock, so both phones follow.
+struct TogetherControls: View {
+    @ObservedObject var together: Together
+    @ObservedObject var book: BookPlayer
+
+    var body: some View {
+        Section {
+            Text(together.statusText)
+                .accessibilityAddTraits(.updatesFrequently)
+        }
+        Section {
+            Button(together.paused ? "Play" : "Pause") { together.command("playpause") }
+            Button("Back 30 seconds") { together.command("back30") }
+            Button("Forward 30 seconds") { together.command("fwd30") }
+            if together.isBook && !book.chapters.isEmpty {
+                Button("Previous chapter") { together.command("prev") }
+                Button("Next chapter") { together.command("next") }
+                NavigationLink("Chapters") { ChapterList(bookID: book.bookID, bookTitle: book.title) }
+            }
+            if together.hasNextEpisode {
+                Button("Next episode") { together.command("next") }
+            }
+            Button("Leave playing together") { together.leave(quiet: false) }
+        }
+        if together.isBook {
+            Section("Listening") {
+                Picker("Speed", selection: Binding(get: { together.room?.rate ?? 1 }, set: { together.setSpeed($0) })) {
+                    ForEach(BookPlayer.speeds, id: \.self) { v in
+                        Text(BookPlayer.speedLabel(v)).tag(v)
+                    }
+                }
+            }
         }
     }
 }

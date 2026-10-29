@@ -4,6 +4,7 @@ name: Build the iPhone app
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -38,6 +39,17 @@ jobs:
             grep -E "error:" build.log | sed -e "s#$PWD/##" | sort -u | head -60
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build log in the ci-log branch
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/cilog" && cd "$RUNNER_TEMP/cilog"
+          git init -q
+          grep -E "error:" "$GITHUB_WORKSPACE/build.log" | sed -e "s#$GITHUB_WORKSPACE/##" | sort -u | head -80 > errors.txt || true
+          tail -c 900000 "$GITHUB_WORKSPACE/build.log" > build.log || true
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Build ${{ github.run_number }} failed"
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/ci-log
 
       - name: Make ADPlayer.ipa
         run: |

@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 import UIKit
 import MediaPlayer
+import Network
+import Combine
 
 /// Everything the screens share: the PC's address, the chosen TV (or this phone), what's playing.
 @MainActor
@@ -29,9 +31,18 @@ final class AppModel: ObservableObject {
     @Published var continueBooks: [BookItem] = []
     @Published var booksSetUp = true          // false: Audiobookshelf isn't set up on the PC, so the audiobook parts are hidden
     @Published var booksNote = ""
+    @Published var me: Me?
+    @Published var needSignIn = false
+    /// The address in use now: the PC's home-network address on the home Wi-Fi, otherwise the one typed in.
+    @Published var activeAddress = ""
 
     let phone: PhonePlayer
     let book: BookPlayer
+    let together: Together
+    private let monitor = NWPathMonitor()
+    private var onWiFi = false
+    private var addressTask: Task<Void, Never>?
+    private var forward: AnyCancellable?
 
     private var restoring = false
     private var restoredOnce = false
@@ -43,6 +54,7 @@ final class AppModel: ObservableObject {
     init() {
         phone = PhonePlayer()
         book = BookPlayer()
+        together = Together()
         phone.api = { [weak self] in self?.api }
         phone.say = { [weak self] text in self?.say(text) }
         phone.onEnded = { [weak self] in
@@ -58,12 +70,107 @@ final class AppModel: ObservableObject {
             Task { await self.loadContinueBooks() }
         }
         setUpRemoteControls()
+        together.model = self
+        // the screens follow playing together too
+        forward = together.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        API.signInNeeded = { [weak self] in self?.needSignIn = true }
+        monitor.pathUpdateHandler = { [weak self] path in
+            let wifi = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
+            let up = path.status == .satisfied
+            Task { @MainActor in self?.networkChanged(wifi: wifi, up: up) }
+        }
+        monitor.start(queue: DispatchQueue(label: "network"))
+    }
+
+    // MARK: home Wi-Fi or away
+
+    private var typedURL: URL? { API.normalise(server) }
+
+    /// On the home Wi-Fi: straight to the PC; elsewhere: the address typed in.
+    var atHome: Bool { !activeAddress.isEmpty && activeAddress != (typedURL?.absoluteString ?? "") }
+
+    private func networkChanged(wifi: Bool, up: Bool) {
+        onWiFi = wifi
+        guard up else { return }
+        addressTask?.cancel()
+        addressTask = Task { await self.chooseAddress(); self.phone.networkBack(); self.book.networkBack() }
+    }
+
+    /// Picks the address: on Wi-Fi, this PC's home address if it answers (and it's the same PC).
+    func chooseAddress() async {
+        guard let away = typedURL else { return }
+        var pick = away.absoluteString
+        let id = UserDefaults.standard.string(forKey: "serverID") ?? ""
+        let homes = UserDefaults.standard.stringArray(forKey: "homeURLs") ?? []
+        if onWiFi && !id.isEmpty {
+            for h in homes where h != pick {
+                guard let u = URL(string: h) else { continue }
+                if let m = await API(base: u).quickMe(), m.serverID == id { pick = h; break }
+            }
+        }
+        let old = api?.base.absoluteString ?? ""
+        activeAddress = pick
+        if !old.isEmpty && old != pick {
+            phone.rebase()
+            book.rebase()
+        }
+    }
+
+    // MARK: signing in
+
+    /// Asks the PC who is signed in on this phone (and remembers its home-network addresses).
+    func checkSignIn() async {
+        guard let api = api else { return }
+        do {
+            let m = try await api.get("api/play/me", as: Me.self)
+            me = m
+            if let id = m.serverID, !id.isEmpty { UserDefaults.standard.set(id, forKey: "serverID") }
+            if let h = m.homeURLs { UserDefaults.standard.set(h, forKey: "homeURLs") }
+            needSignIn = !(m.signedIn ?? false) || API.token.isEmpty
+        } catch APIError.signIn(_) {
+            needSignIn = true
+        } catch {
+            // the PC didn't answer: keep going as before
+        }
+    }
+
+    /// Returns nil when signed in, otherwise what went wrong.
+    func signIn(user: String, password: String) async -> String? {
+        guard let api = api else { return APIError.badAddress.localizedDescription }
+        do {
+            let r = try await api.post("api/play/login", ["user": user, "password": password, "app": "1"], as: LoginResponse.self)
+            guard let token = r.token, !token.isEmpty else { return "The PC's app needs updating for signing in." }
+            API.token = token
+            Keychain.set("token", token)
+            await checkSignIn()
+            await chooseAddress()
+            needSignIn = false
+            await refreshAll()
+            say(r.message)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func signOut() {
+        together.leave(quiet: true)
+        phone.stop(saving: true, quiet: true, notify: false)
+        book.stop(saving: true, quiet: true, notify: false)
+        if let api = api { Task { _ = try? await api.post("api/play/logout", [:], as: MessageResponse.self) } }
+        API.token = ""
+        Keychain.set("token", nil)
+        me = nil
+        needSignIn = true
     }
 
     /// Something is playing on this phone (a show's audio or a book).
     var phoneBusy: Bool { phone.active || book.active }
 
-    var api: API? { API.normalise(server).map { API(base: $0) } }
+    var api: API? {
+        if !activeAddress.isEmpty, let u = URL(string: activeAddress) { return API(base: u) }
+        return API.normalise(server).map { API(base: $0) }
+    }
     var isPhone: Bool { target == AppModel.phoneID }
     var targetName: String { nameOf(target) }
 
@@ -102,6 +209,8 @@ final class AppModel: ObservableObject {
         let probe = API(base: url)
         do {
             _ = try await probe.get("api/play/devices", as: DevicesResponse.self)
+        } catch APIError.signIn(_) {
+            // the PC answered and wants her to sign in - fine
         } catch APIError.server(_) {
             // the PC answered (Emby might just be off right now) - good enough
         } catch {
@@ -109,8 +218,11 @@ final class AppModel: ObservableObject {
         }
         server = url.absoluteString
         UserDefaults.standard.set(server, forKey: "server")
+        activeAddress = ""
         lastRefresh = .distantPast
-        await refreshAll()
+        await checkSignIn()
+        await chooseAddress()
+        if !needSignIn { await refreshAll() }
         return nil
     }
 
@@ -201,6 +313,16 @@ final class AppModel: ObservableObject {
 
     /// at: start this many seconds into the book (a chapter); otherwise her place when resume is true.
     func playBook(id: String, label: String, resume: Bool, at: Double? = nil) {
+        if together.active && together.isBook && together.room?.item == id, let at = at {
+            together.seekTo(at)                                    // a chapter of the book we're listening to together
+            showPlayer = true
+            return
+        }
+        if isPhone && together.enabled {
+            together.startBook(id: id, label: label, resume: resume, at: at)
+            return
+        }
+        if together.active { together.leave(quiet: true) }
         if isPhone {
             if phone.active { phone.stop(saving: true, quiet: true, notify: false) }
             showPlayer = true
@@ -230,6 +352,11 @@ final class AppModel: ObservableObject {
     // MARK: playing
 
     func play(_ item: Item, resume: Bool) {
+        if isPhone && together.enabled {
+            together.startShow(item, resume: resume)
+            return
+        }
+        if together.active { together.leave(quiet: true) }
         if isPhone {
             if book.active { book.stop(saving: true, quiet: true, notify: false) }
             showPlayer = true
@@ -339,14 +466,22 @@ final class AppModel: ObservableObject {
             return
         }
         if api != nil && Date().timeIntervalSince(lastRefresh) > 30 {
-            Task { await self.refreshAll() }
+            Task {
+                await self.chooseAddress()
+                await self.checkSignIn()
+                if !self.needSignIn { await self.refreshAll() }
+            }
         }
         pollTask = Task { [weak self] in
+            var n = 0
             while !Task.isCancelled {
                 guard let self = self else { return }
-                if !self.isPhone { await self.refreshStatus() }
-                let wait: UInt64 = self.showPlayer ? 3 : 15
-                try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
+                if !self.needSignIn {
+                    if !self.isPhone && n % (self.showPlayer ? 3 : 15) == 0 { await self.refreshStatus() }
+                    if !self.together.active && n % 5 == 0 { await self.together.pollInvites() }
+                }
+                n += 1
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }
@@ -397,6 +532,20 @@ final class AppModel: ObservableObject {
     }
 
     private func remote(_ action: String, _ value: Double = 0) {
+        if together.active {
+            switch action {
+            case "play": together.command("play")
+            case "pause": together.command("pause")
+            case "toggle": together.command("playpause")
+            case "fwd": together.command("fwd30")
+            case "back": together.command("back30")
+            case "next": together.command("next")
+            case "prev": together.command("prev")
+            case "seek": together.seekTo(value)
+            default: break
+            }
+            return
+        }
         if book.active {
             switch action {
             case "play": book.play()
