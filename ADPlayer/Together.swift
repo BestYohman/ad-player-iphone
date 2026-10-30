@@ -31,6 +31,8 @@ final class Together: ObservableObject {
     private var stalls = 0
     private var expectPlay = Date.distantPast
     private var expectPause = Date.distantPast
+    private var jseq = 0                    // the last skip (back, forward, a chapter) this phone went to
+    private var waitingAhead = false        // ahead of the others: waiting here for them
 
     let cid: String = {
         if let c = UserDefaults.standard.string(forKey: "cid"), !c.isEmpty { return c }
@@ -118,6 +120,8 @@ final class Together: ObservableObject {
         iseq = 0
         iseqLoaded = 0
         msgSeq = r.msgSeq ?? 0
+        jseq = r.jseq ?? 0
+        waitingAhead = false
         skips = 0
         stalls = 0
         invites = []
@@ -144,7 +148,9 @@ final class Together: ObservableObject {
         let t0 = Date()
         let form = ["cid": cid, "room": roomID, "pos": String(format: "%.2f", ready ? mediaTime : 0),
                     "ready": ready ? "1" : "0", "buf": isStuck ? "1" : "0", "iseq": String(iseqLoaded),
-                    "sk": String(skips), "stl": String(stalls)]
+                    "sk": String(skips), "stl": String(stalls),
+                    // which skip this phone has got to, and whether it is still loading there (the others wait for it)
+                    "jseq": String(jseq), "ld": (!ready || loading) ? "1" : "0"]
         guard let r = try? await api.post("api/play/together/beat", form, as: Room.self) else { return }
         let took = Date().timeIntervalSince(t0)
         if took < 3 { rtt = rtt * 0.7 + took * 0.3 }
@@ -193,6 +199,9 @@ final class Together: ObservableObject {
         return (phone?.ready ?? false) && phone?.currentItemID == room?.item
     }
 
+    /// Loading right now (even for a moment).
+    private var loading: Bool { kind == "book" ? (book?.buffering ?? false) : (phone?.buffering ?? false) }
+
     private var mediaTime: Double { kind == "book" ? (book?.currentTime() ?? 0) : (phone?.currentTime() ?? 0) }
     private var mediaRate: Double { kind == "book" ? (book?.rate ?? 0) : (phone?.rate ?? 0) }
 
@@ -226,32 +235,37 @@ final class Together: ObservableObject {
         if kind == "book" { book?.pause(quiet: true) } else { phone?.pause(quiet: true) }
     }
 
-    /// Small differences: a little faster or slower. Skipping (which loads again - slow on a phone network)
-    /// only for big ones, aimed ahead by how long a skip takes on this phone.
+    /// Nobody is skipped ahead to catch up (they may be in different places - nothing should be missed): a phone that
+    /// is behind just carries on (the PC moves everyone back to it), and a phone that is ahead waits until the others
+    /// reach it. Only a real skip (back, forward, a chapter, the next episode) moves everyone, and the PC then waits
+    /// until every phone has got there and loaded.
     private func sync(_ r: Room) {
         let base = (r.rate ?? 1) > 0 ? (r.rate ?? 1) : 1
         let run = r.run ?? false
         // a little ahead by how late this phone's sound reaches her ears (Bluetooth headphones), so both hear it together
         let target = (r.pos ?? 0) + (run ? rtt / 2 * base : 0) + outputDelay * base
         let diff = mediaTime - target
-        let lead = min(5, seekCost) * base
+        let js = r.jseq ?? 0
+        if js != jseq {
+            jseq = js
+            waitingAhead = false
+            if abs(diff) > 0.5 { seek(target) }
+            if run { play(rate: base) } else if mediaRate != 0 { pause() }
+            return
+        }
         if run {
-            if mediaRate == 0 {
-                if abs(diff) > 0.75 { seek(target + lead) }
-                play(rate: base)
-                return
-            }
-            if abs(diff) > 2.5 {
-                seek(target + lead)
-                play(rate: base)
-            } else if abs(diff) > 0.15 {
-                play(rate: base * (1 - max(-0.08, min(0.08, diff * 0.15))))
-            } else if abs(mediaRate - base) > 0.001 {
-                play(rate: base)
+            if diff > 0.6 || (waitingAhead && diff > 0.1) {
+                if !waitingAhead { waitingAhead = true; skips += 1 }
+                if mediaRate != 0 { pause() }
+            } else {
+                waitingAhead = false
+                let want = diff > 0.15 ? base * (1 - min(0.05, diff * 0.1)) : base
+                if mediaRate == 0 || abs(mediaRate - want) > 0.001 { play(rate: want) }
             }
         } else {
+            waitingAhead = false
             if mediaRate != 0 { pause() }
-            if abs(diff) > 0.25 { seek(target) }
+            if diff > 0.25 { seek(target) }               // paused: back to where everyone is (never forward)
         }
     }
 
@@ -294,7 +308,7 @@ final class Together: ObservableObject {
         let want = r?.want ?? false
         let waiting = r?.waiting ?? false
         var c = c0
-        if c == "stop" { leave(quiet: false); return }
+        if c == "stop" { stopAll(); return }
         if c == "playpause" { c = (want && !waiting) ? "pause" : "play" }
         if c == "play" { control("play", okText: waiting ? "Starting." : "Playing."); return }
         if c == "pause" { control("pause", okText: "Paused."); return }
@@ -331,6 +345,19 @@ final class Together: ObservableObject {
 
     private func ended() {
         control("ended", ["item": room?.item ?? ""])
+    }
+
+    /// Stop for everyone: the other phones stop too (and are told who stopped it).
+    func stopAll() {
+        guard active, let api = api else { return }
+        let id = roomID
+        seenInvites.insert(id)
+        finish()
+        say("Stopped for everyone.")
+        Task {
+            _ = try? await api.post("api/play/together/control", ["cid": cid, "room": id, "action": "stop"], as: Room.self)
+            await self.pollInvites()
+        }
     }
 
     func leave(quiet: Bool) {

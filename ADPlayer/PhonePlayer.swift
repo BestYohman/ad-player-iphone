@@ -125,12 +125,32 @@ final class PhonePlayer: ObservableObject {
                 while true {
                     if job.state == "failed" { throw APIError.server(job.error ?? "Couldn't get the audio ready.") }
                     let farEnough = resumeAt <= 5 || (job.encodedSeconds ?? 0) >= resumeAt + 15
-                    if job.url != nil && (job.state == "ready" || ((job.playable ?? false) && farEnough)) { break }
+                    // playing together: the whole audio comes onto the phone first (so the network can't make
+                    // anyone wait later); on her own it starts as soon as the first part is made
+                    if startAt != nil {
+                        if job.state == "ready" && job.fullURL != nil { break }
+                    } else if job.url != nil && (job.state == "ready" || ((job.playable ?? false) && farEnough)) { break }
                     self.progress = Int(job.progress ?? 0)
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                     guard gen == self.generation else { return }
                     job = try await api.get("api/play/listen/job/\(job.id)", as: ListenJob.self)
                     guard gen == self.generation else { return }
+                }
+                if startAt != nil, let full = job.fullURL, let fullURL = api.media(full) {
+                    self.progress = 100
+                    var file: URL?
+                    for _ in 0..<20 {
+                        file = await Downloads.get(fullURL, name: "\(job.id).m4a")
+                        if file != nil || gen != self.generation { break }
+                        try await Task.sleep(nanoseconds: 3_000_000_000)    // the connection dropped: try again
+                    }
+                    guard gen == self.generation else { return }
+                    if let f = file {
+                        self.localFile = f
+                        self.mediaPath = job.url
+                        self.begin(url: f, at: startAt ?? 0, gen: gen, play: false, announce: false)
+                        return
+                    }
                 }
                 guard let path = job.url, let url = api.media(path) else { throw APIError.server("Couldn't get the audio ready.") }
                 self.mediaPath = path
@@ -501,6 +521,21 @@ enum Downloads {
         return dest
     }
 
+    /// Downloads url to dest (or finds it already there). Nil if it didn't finish.
+    static func fetch(_ url: URL, to dest: URL) async -> URL? {
+        if let size = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber, size.intValue > 1000 {
+            return dest
+        }
+        try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var request = URLRequest(url: url)
+        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
+        guard let result = try? await session.download(for: request),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        try? FileManager.default.removeItem(at: dest)
+        guard (try? FileManager.default.moveItem(at: result.0, to: dest)) != nil else { return nil }
+        return dest
+    }
+
     private static func prune() {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
@@ -510,5 +545,35 @@ enum Downloads {
             return a > b
         }
         for f in sorted.dropFirst(4) { try? fm.removeItem(at: f) }
+    }
+}
+
+/// A book's pieces kept on the phone while it plays (the piece it's on and the next few); only the book playing keeps them.
+enum BookParts {
+    static var folder: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("bookparts", isDirectory: true)
+    }
+
+    static func dir(_ bookID: String) -> URL {
+        folder.appendingPathComponent(bookID.replacingOccurrences(of: "/", with: "_"), isDirectory: true)
+    }
+
+    static func file(_ bookID: String, _ i: Int, _ url: String) -> URL {
+        let ext = String((url.split(separator: "?").first ?? "").split(separator: ".").last ?? "mp3").prefix(4)
+        return dir(bookID).appendingPathComponent("\(i).\(ext)")
+    }
+
+    static func have(_ bookID: String, _ i: Int, _ url: String) -> URL? {
+        let f = file(bookID, i, url)
+        let size = (try? FileManager.default.attributesOfItem(atPath: f.path))?[.size] as? NSNumber
+        return (size?.intValue ?? 0) > 1000 ? f : nil
+    }
+
+    static func keepOnly(_ bookID: String) {
+        let keep = dir(bookID).lastPathComponent
+        for f in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where f.lastPathComponent != keep {
+            try? FileManager.default.removeItem(at: f)
+        }
     }
 }

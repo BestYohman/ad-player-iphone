@@ -62,6 +62,10 @@ final class BookPlayer: ObservableObject {
     private var retryTask: Task<Void, Never>?
     private var retries = 0
     private var together = false
+    private var pieces = false                // the book comes as pieces fetched onto the phone (newer PC)
+    private var streamPieces = Set<Int>()     // pieces that couldn't be fetched: played straight from the PC
+    private var fetchTask: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
 
     init() {
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -223,7 +227,17 @@ final class BookPlayer: ObservableObject {
                 self.author = b.author ?? ""
                 self.duration = b.duration
                 self.chapters = b.chapters
-                self.tracks = b.tracks
+                if let segs = b.segs, !segs.isEmpty {
+                    // the piece it starts in is fetched onto the phone first, then the next ones while it plays
+                    self.tracks = segs.map { s in
+                        BookTrack(start: s.start, duration: s.duration, ino: "", mime: nil,
+                                  codec: s.url.hasSuffix(".mp3") ? "mp3" : "aac", url: s.url, tx: "")
+                    }
+                    self.pieces = true
+                    BookParts.keepOnly(id)
+                } else {
+                    self.tracks = b.tracks
+                }
                 var pos = at ?? ((resume && !b.finished) ? max(0, b.position - 2) : 0)
                 if b.duration > 0 && pos >= b.duration - 2 { pos = 0 }
                 self.position = pos
@@ -262,10 +276,26 @@ final class BookPlayer: ObservableObject {
         switching = true
         loadGeneration += 1
         let lg = loadGeneration
-        let direct = !forceTx.contains(i) && BookPlayer.playsDirectly(t)
+        if pieces && BookParts.have(bookID, i, t.url) == nil && !streamPieces.contains(i) {
+            let id = bookID
+            fetchTask?.cancel()
+            fetchTask = Task { [weak self] in
+                guard let self = self, let u = api.media(t.url) else { return }
+                let f = await Downloads.fetch(u, to: BookParts.file(id, i, t.url))
+                guard lg == self.loadGeneration, self.active, self.bookID == id else { return }
+                if f == nil {
+                    self.streamPieces.insert(i)
+                    if !self.together { self.say("The connection is slow - playing straight from the PC.") }
+                }
+                self.load(i, off, play: play, announce: announce)
+            }
+            return
+        }
+        let direct = pieces || (!forceTx.contains(i) && BookPlayer.playsDirectly(t))
         base = direct ? 0 : off
         let path = direct ? t.url : t.tx + "?t=" + String(format: "%.1f", off)
-        guard let url = api.media(path) else { return }
+        let local = pieces ? BookParts.have(bookID, i, t.url) : nil
+        guard let url = local ?? api.media(path) else { return }
         statusObservation?.invalidate()
         statusObservation = nil
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
@@ -295,6 +325,18 @@ final class BookPlayer: ObservableObject {
         if status == .failed {
             if BookPlayer.isNetwork(p.currentItem?.error) && retries < 60 {   // the connection: try again shortly
                 lostConnection(lg)
+                return
+            }
+            if pieces {                                   // the phone's copy didn't play: straight from the PC instead
+                if !streamPieces.contains(index) {
+                    if let f = BookParts.have(bookID, index, tracks[index].url) { try? FileManager.default.removeItem(at: f) }
+                    streamPieces.insert(index)
+                    load(index, offset, play: play, announce: announce)
+                    return
+                }
+                let name = title
+                stop(saving: false, quiet: true, notify: true)
+                say("This phone couldn't play \(name).")
                 return
             }
             if direct {                                   // try the PC's MP3 of this part instead
@@ -330,10 +372,26 @@ final class BookPlayer: ObservableObject {
         }
         position = currentTime()
         updateNowPlaying()
+        prefetch(after: part)
         if announce {
             let pos = position
             say("Playing \(title)" + (author.isEmpty ? "" : " by \(author)") + " on this phone" +
                 (pos > 5 ? " from \(Speak.position(pos))" : "") + ".")
+        }
+    }
+
+    /// While it plays: the next two pieces are fetched onto the phone.
+    private func prefetch(after i: Int) {
+        guard pieces, i + 1 < tracks.count else { return }
+        prefetchTask?.cancel()
+        let id = bookID, gen = generation, upto = min(i + 2, tracks.count - 1)
+        let wanted = Array(tracks[(i + 1)...upto].enumerated()).map { (i + 1 + $0.offset, $0.element.url) }
+        prefetchTask = Task { [weak self] in
+            for (j, path) in wanted {
+                guard let self = self, gen == self.generation, !Task.isCancelled, let api = self.api(), let u = api.media(path) else { return }
+                if BookParts.have(id, j, path) != nil { continue }
+                if await Downloads.fetch(u, to: BookParts.file(id, j, path)) == nil { return }
+            }
         }
     }
 
@@ -536,6 +594,12 @@ final class BookPlayer: ObservableObject {
         loadGeneration += 1
         startTask?.cancel()
         startTask = nil
+        fetchTask?.cancel()
+        fetchTask = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        pieces = false
+        streamPieces = []
         retryTask?.cancel()
         retryTask = nil
         tearDown()

@@ -180,9 +180,10 @@ struct Room: Decodable {
     let notReady: [String]?
     let gone: Bool?
     let left: Bool?
+    let jseq: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, item, title, iseq, run, want, waiting, hold, pos, rate, runtime, by, role, msg, others, gone, left
+        case id, kind, item, title, iseq, run, want, waiting, hold, pos, rate, runtime, by, role, msg, others, gone, left, jseq
         case hasNext = "has_next"
         case msgBy = "msg_by"
         case msgSeq = "msg_seq"
@@ -371,6 +372,14 @@ struct BookDetail: Decodable {
     let position: Double
     let finished: Bool
     let cover: String?
+    let segs: [BookSeg]?
+}
+
+/// A piece of a book as the phone fetches it: a part as it is, or 10 minutes of a long file.
+struct BookSeg: Decodable, Hashable {
+    let start: Double
+    let duration: Double
+    let url: String
 }
 
 struct ListenJob: Decodable {

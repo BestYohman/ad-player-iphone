@@ -601,7 +601,8 @@ struct TogetherControls: View {
             if together.hasNextEpisode {
                 Button("Next episode") { together.command("next") }
             }
-            Button("Leave playing together") { together.leave(quiet: false) }
+            Button("Stop for everyone") { together.stopAll() }
+            Button("Leave - the others carry on") { together.leave(quiet: false) }
         }
         if together.isBook {
             Section("Listening") {
