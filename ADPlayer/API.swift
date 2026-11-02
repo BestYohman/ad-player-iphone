@@ -49,11 +49,25 @@ struct API {
         let lower = s.lowercased()
         if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") { s = "http://" + s }
         guard var parts = URLComponents(string: s), let host = parts.host, !host.isEmpty else { return nil }
-        if parts.port == nil { parts.port = 5021 }
+        // the PC at home (an IP address or a name without dots) is on port 5021; a web address is used as typed
+        // (its own port, or the normal one - https or a forwarded port 80)
+        let local = host.allSatisfy { $0.isNumber || $0 == "." } || !host.contains(".") || host.hasSuffix(".local") || host.hasSuffix(".lan")
+        if parts.port == nil && local && parts.scheme == "http" { parts.port = 5021 }
         parts.path = ""
         parts.query = nil
         parts.fragment = nil
         return parts.url
+    }
+
+    /// The addresses to try for what was typed: as it is, then (a web address with no port) on port 5021 too.
+    static func candidates(_ text: String) -> [URL] {
+        guard let u = normalise(text) else { return [] }
+        var out = [u]
+        if var parts = URLComponents(url: u, resolvingAgainstBaseURL: false), parts.port == nil, parts.scheme == "http" {
+            parts.port = 5021
+            if let alt = parts.url { out.append(alt) }
+        }
+        return out
     }
 
     private static let session: URLSession = {

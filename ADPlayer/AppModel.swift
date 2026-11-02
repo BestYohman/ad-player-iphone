@@ -205,17 +205,25 @@ final class AppModel: ObservableObject {
 
     /// Returns nil when the PC answered, otherwise what went wrong.
     func connect(_ text: String) async -> String? {
-        guard let url = API.normalise(text) else { return APIError.badAddress.localizedDescription }
-        let probe = API(base: url)
-        do {
-            _ = try await probe.get("api/play/devices", as: DevicesResponse.self)
-        } catch APIError.signIn(_) {
-            // the PC answered and wants her to sign in - fine
-        } catch APIError.server(_) {
-            // the PC answered (Emby might just be off right now) - good enough
-        } catch {
-            return error.localizedDescription
+        let tries = API.candidates(text)
+        guard !tries.isEmpty else { return APIError.badAddress.localizedDescription }
+        var found: URL?
+        var problem = ""
+        for url in tries {
+            // the AD Player answers "who am I" without signing in, and says which PC it is
+            do {
+                let me = try await API(base: url).get("api/play/me", as: Me.self)
+                if me.serverID != nil || me.signedIn != nil { found = url; break }
+                problem = "That address answered, but not like the AD Player."
+            } catch APIError.signIn(_) {
+                found = url; break
+            } catch APIError.server(_) {
+                problem = "That address answered, but not like the AD Player. Check the web address and port."
+            } catch {
+                problem = error.localizedDescription
+            }
         }
+        guard let url = found else { return problem.isEmpty ? APIError.network.localizedDescription : problem }
         server = url.absoluteString
         UserDefaults.standard.set(server, forKey: "server")
         activeAddress = ""
