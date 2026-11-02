@@ -631,7 +631,7 @@ final class BookPlayer: ObservableObject {
         lastSave = Date()
         let form = ["item": bookID, "pos": String(format: "%.1f", t), "duration": String(format: "%.1f", duration),
                     "finished": finished ? "1" : "0"]
-        Task { _ = try? await api.post("api/play/books/save", form, as: MessageResponse.self) }
+        Places.send(api, "api/play/books/save", form)
     }
 
     private func tearDown() {

@@ -93,7 +93,10 @@ final class AppModel: ObservableObject {
         onWiFi = wifi
         guard up else { return }
         addressTask?.cancel()
-        addressTask = Task { await self.chooseAddress(); self.phone.networkBack(); self.book.networkBack() }
+        addressTask = Task {
+            await self.chooseAddress(); self.phone.networkBack(); self.book.networkBack()
+            if let api = self.api { await Places.flush(api) }
+        }
     }
 
     /// Picks the address: on Wi-Fi, this PC's home address if it answers (and it's the same PC).
@@ -236,6 +239,7 @@ final class AppModel: ObservableObject {
 
     func refreshAll() async {
         lastRefresh = Date()
+        if let api = api { await Places.flush(api) }          // places kept while the PC couldn't be reached
         await refreshDevices(announce: false)
         await loadContinue()
         await loadContinueBooks()

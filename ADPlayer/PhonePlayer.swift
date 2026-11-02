@@ -449,7 +449,7 @@ final class PhonePlayer: ObservableObject {
         lastSave = Date()
         var form = ["item": id, "pos": String(format: "%.1f", t)]
         if finished { form["finished"] = "1" }
-        Task { _ = try? await api.post("api/play/listen/save", form, as: MessageResponse.self) }
+        Places.send(api, "api/play/listen/save", form)
     }
 
     private func tearDown() {
@@ -574,6 +574,39 @@ enum BookParts {
         let keep = dir(bookID).lastPathComponent
         for f in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where f.lastPathComponent != keep {
             try? FileManager.default.removeItem(at: f)
+        }
+    }
+}
+
+/// Her place, with when it was saved. One that couldn't reach the PC (no connection) is kept on the phone and sent
+/// as soon as the PC answers again; the PC keeps a newer place from another device rather than take an older one.
+@MainActor
+enum Places {
+    private static let key = "pendingPlaces"
+
+    static func send(_ api: API, _ path: String, _ form0: [String: String]) {
+        var form = form0
+        form["at"] = String(format: "%.1f", Date().timeIntervalSince1970)
+        Task {
+            let ok = (try? await api.post(path, form, as: MessageResponse.self)) != nil
+            var p = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+            let item = form["item"] ?? ""
+            if ok { if p[item]?["at"] == form["at"] { p[item] = nil } }
+            else { var f = form; f["_path"] = path; p[item] = f }
+            UserDefaults.standard.set(p, forKey: key)
+        }
+    }
+
+    /// Sends the places kept while the PC couldn't be reached.
+    static func flush(_ api: API) async {
+        let p = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+        for (item, f0) in p {
+            var f = f0
+            let path = f.removeValue(forKey: "_path") ?? "api/play/listen/save"
+            guard (try? await api.post(path, f, as: MessageResponse.self)) != nil else { return }
+            var now = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+            if now[item]?["at"] == f["at"] { now[item] = nil }
+            UserDefaults.standard.set(now, forKey: key)
         }
     }
 }
