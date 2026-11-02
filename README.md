@@ -26,6 +26,9 @@ A small iPhone app for the AD Player in `describealign_ultimate.py`. It can:
     until every phone has got there. When playing together, the audio is all on the phone before it starts.
   - Audiobooks come onto the phone a piece at a time: the piece it starts in first, then the next ones while it plays.
 
+- Version 1.5: audiobook bookmarks (Audiobookshelf's own, so they also show in its apps). While a book plays: Add a
+  bookmark here, and Bookmarks - each one plays from there; Rename and Remove are VoiceOver actions on each bookmark.
+
 It talks to the PC on port 5021, the same as the AD Player web page.
 
 The app is built on GitHub's Macs, so no Mac is needed. It is installed with AltStore using a free Apple ID, and AltStore re-signs it every 7 days.

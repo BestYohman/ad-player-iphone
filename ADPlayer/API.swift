@@ -462,3 +462,24 @@ enum Speak {
         return s + "."
     }
 }
+
+/// One of her bookmarks in a book (Audiobookshelf's own, so they show in its apps too).
+struct BookmarkEntry: Decodable, Identifiable, Hashable {
+    let time: Double
+    let title: String
+    let at: String
+    let chapter: String?
+    var id: Double { time }
+
+    /// What VoiceOver reads: the name, where it is, and the chapter when the name doesn't already say it.
+    var spoken: String {
+        var s = "\(title), at \(at)"
+        if let c = chapter, !c.isEmpty, !title.contains(c) { s += ", in \(c)" }
+        return s
+    }
+}
+
+struct BookmarksResponse: Decodable {
+    let bookmarks: [BookmarkEntry]
+    let message: String?
+}

@@ -532,6 +532,9 @@ struct NowPlayingView: View {
                     .disabled(book.preparing)
                 NavigationLink("Chapters") { ChapterList(bookID: book.bookID, bookTitle: book.title) }
             }
+            Button("Add a bookmark here") { model.addBookmark(bookID: book.bookID, at: book.currentTime()) }
+                .disabled(book.preparing)
+            NavigationLink("Bookmarks") { BookmarkList(bookID: book.bookID, bookTitle: book.title) }
             Button("Stop") { book.stop() }
         }
         Section("Listening") {
@@ -562,6 +565,10 @@ struct NowPlayingView: View {
             }
             if let id = s?.bookID, s?.hasPrev == true {
                 NavigationLink("Chapters") { ChapterList(bookID: id, bookTitle: s?.title ?? "") }
+            }
+            if let id = s?.bookID {
+                Button("Add a bookmark here") { model.addBookmark(bookID: id, at: (s?.posTicks ?? 0) / 10_000_000) }
+                NavigationLink("Bookmarks") { BookmarkList(bookID: id, bookTitle: s?.title ?? "") }
             }
             Button("Stop") { model.tv("stop") }
         }
@@ -597,6 +604,10 @@ struct TogetherControls: View {
                 Button("Previous chapter") { together.command("prev") }
                 Button("Next chapter") { together.command("next") }
                 NavigationLink("Chapters") { ChapterList(bookID: book.bookID, bookTitle: book.title) }
+            }
+            if together.isBook && book.ready {
+                Button("Add a bookmark here") { model.addBookmark(bookID: book.bookID, at: book.currentTime()) }
+                NavigationLink("Bookmarks") { BookmarkList(bookID: book.bookID, bookTitle: book.title) }
             }
             if together.hasNextEpisode {
                 Button("Next episode") { together.command("next") }
@@ -718,6 +729,77 @@ struct BookListView: View {
 }
 
 /// A book's chapters; choosing one plays the book from there and goes back.
+/// Her bookmarks in a book: each one plays from there; Rename and Remove are VoiceOver actions (swipe up or down),
+/// or a swipe left on the row.
+struct BookmarkList: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let bookID: String
+    let bookTitle: String
+    @State private var items: [BookmarkEntry] = []
+    @State private var loading = true
+    @State private var problem: String?
+    @State private var renaming: BookmarkEntry?
+    @State private var newName = ""
+
+    var body: some View {
+        List {
+            if loading && items.isEmpty {
+                Text("Loading…")
+            } else if let problem = problem {
+                Text(problem)
+            } else if items.isEmpty {
+                Text("No bookmarks in this book yet. While it plays, Add a bookmark here keeps the place.")
+            }
+            ForEach(items) { b in
+                Button(b.spoken) {
+                    dismiss()
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 700_000_000)
+                        model.playBook(id: bookID, label: bookTitle, resume: false, at: b.time)
+                    }
+                }
+                .accessibilityAction(named: "Rename") { newName = b.title; renaming = b }
+                .accessibilityAction(named: "Remove") { remove(b) }
+                .swipeActions {
+                    Button("Remove", role: .destructive) { remove(b) }
+                    Button("Rename") { newName = b.title; renaming = b }
+                }
+            }
+        }
+        .navigationTitle(bookTitle.isEmpty ? "Bookmarks" : "\(bookTitle) bookmarks")
+        .task { await load() }
+        .alert("Rename the bookmark", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let b = renaming { change(b, "rename", newName) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+
+    private func remove(_ b: BookmarkEntry) { change(b, "remove", "") }
+
+    private func change(_ b: BookmarkEntry, _ action: String, _ title: String) {
+        Task {
+            do { items = try await model.changeBookmark(bookID, action, time: b.time, title: title) }
+            catch { model.say(error.localizedDescription) }
+        }
+    }
+
+    private func load() async {
+        loading = true
+        do {
+            items = try await model.bookmarks(bookID)
+            problem = nil
+        } catch {
+            problem = error.localizedDescription
+        }
+        loading = false
+    }
+}
+
 struct ChapterList: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss

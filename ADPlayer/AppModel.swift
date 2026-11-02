@@ -319,6 +319,35 @@ final class AppModel: ObservableObject {
         return r.items
     }
 
+    // MARK: bookmarks
+
+    /// Keeps the place it's at now as a bookmark (named after the chapter and time).
+    func addBookmark(bookID: String, at: Double) {
+        guard let api = api, !bookID.isEmpty else { return }
+        Task {
+            do {
+                let r = try await api.post("api/play/books/bookmark", ["item": bookID, "time": String(format: "%.1f", at)], as: BookmarksResponse.self)
+                self.say(r.message ?? "Bookmark added.")
+            } catch {
+                self.say(error.localizedDescription)
+            }
+        }
+    }
+
+    func bookmarks(_ bookID: String) async throws -> [BookmarkEntry] {
+        guard let api = api else { throw APIError.badAddress }
+        return try await api.get("api/play/books/bookmarks", ["id": bookID], as: BookmarksResponse.self).bookmarks
+    }
+
+    /// action: remove or rename. Returns the bookmarks as they are now.
+    func changeBookmark(_ bookID: String, _ action: String, time: Double, title: String = "") async throws -> [BookmarkEntry] {
+        guard let api = api else { throw APIError.badAddress }
+        let r = try await api.post("api/play/books/bookmark", ["item": bookID, "action": action, "time": String(format: "%.1f", time),
+                                                               "title": title], as: BookmarksResponse.self)
+        if let m = r.message { say(m) }
+        return r.bookmarks
+    }
+
     /// at: start this many seconds into the book (a chapter); otherwise her place when resume is true.
     func playBook(id: String, label: String, resume: Bool, at: Double? = nil) {
         if together.active && together.isBook && together.room?.item == id, let at = at {
