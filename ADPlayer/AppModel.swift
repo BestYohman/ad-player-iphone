@@ -226,14 +226,24 @@ final class AppModel: ObservableObject {
                 problem = error.localizedDescription
             }
         }
+        // On the home Wi-Fi the web address often can't be reached from inside (many routers don't loop back):
+        // keep the web address for away from home, and use the PC's home address it gave before.
+        var home = ""
+        if found == nil, onWiFi, let typed = tries.first {
+            let id = UserDefaults.standard.string(forKey: "serverID") ?? ""
+            for h in UserDefaults.standard.stringArray(forKey: "homeURLs") ?? [] {
+                guard let u = URL(string: h), let m = await API(base: u).quickMe() else { continue }
+                if id.isEmpty || m.serverID == id { found = typed; home = h; break }
+            }
+        }
         guard let url = found else { return problem.isEmpty ? APIError.network.localizedDescription : problem }
         server = url.absoluteString
         UserDefaults.standard.set(server, forKey: "server")
-        activeAddress = ""
+        activeAddress = home
         lastRefresh = .distantPast
         await checkSignIn()
-        await chooseAddress()
-        if !needSignIn { await refreshAll() }
+        if home.isEmpty { await chooseAddress() }
+        if !needSignIn { Task { await refreshAll() } }      // the lists load in the background - connected already
         return nil
     }
 

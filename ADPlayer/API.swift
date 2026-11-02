@@ -8,6 +8,7 @@ enum APIError: LocalizedError {
     case badAddress
     case network
     case signIn(String)
+    case networkWhy(String)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +16,7 @@ enum APIError: LocalizedError {
         case .signIn(let message): return message
         case .badAddress: return "The address of the PC doesn't look right. Check it in Settings."
         case .network: return "Couldn't reach the PC. Is it turned on, and is this phone on the home Wi-Fi?"
+        case .networkWhy(let why): return "Couldn't reach the PC: \(why)"
         }
     }
 }
@@ -94,6 +96,25 @@ struct API {
         URL(string: path, relativeTo: base)?.absoluteURL
     }
 
+    /// What went wrong, in words someone can act on.
+    static func explain(_ e: URLError) -> APIError {
+        if e.networkUnavailableReason == .cellular {
+            return .networkWhy("mobile data is turned off for AD Player. In the iPhone's Settings, open Apps, then AD Player, and turn on Mobile Data (on older iPhones: Settings, Mobile Data, AD Player).")
+        }
+        switch e.code {
+        case .notConnectedToInternet, .dataNotAllowed:
+            return .networkWhy("this iPhone has no internet connection right now - or mobile data is turned off for AD Player (Settings, Apps, AD Player, Mobile Data).")
+        case .cannotFindHost, .dnsLookupFailed:
+            return .networkWhy("the iPhone couldn't find that address. Check its spelling in Settings.")
+        case .timedOut:
+            return .networkWhy("it took too long to answer. On the home Wi-Fi, use the PC's own address (like 192.168.2.10).")
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed:
+            return .networkWhy("the secure (https) connection failed.")
+        default:
+            return .networkWhy(e.localizedDescription)
+        }
+    }
+
     func get<T: Decodable>(_ path: String, _ query: [String: String?] = [:], as type: T.Type) async throws -> T {
         var request = URLRequest(url: url(path, query))
         if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
@@ -118,6 +139,8 @@ struct API {
             result = try await API.session.data(for: request)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let e as URLError {
+            throw API.explain(e)
         } catch {
             throw APIError.network
         }
