@@ -28,7 +28,8 @@ jobs:
           xcodebuild -project ADPlayer.xcodeproj -target ADPlayer -configuration Release -sdk iphoneos \
             SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
-          test -d build/Release-iphoneos/ADPlayer.app
+          # a failed build can leave an empty app folder behind: only go on when it really built
+          grep -q "BUILD SUCCEEDED" build.log && test -f build/Release-iphoneos/ADPlayer.app/ADPlayer
 
       - name: List the errors (copy these to Claude)
         if: failure()

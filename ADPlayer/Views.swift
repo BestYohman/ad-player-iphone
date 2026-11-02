@@ -588,6 +588,7 @@ struct NowPlayingView: View {
 
 /// The buttons while playing together: they work the shared clock, so both phones follow.
 struct TogetherControls: View {
+    @EnvironmentObject var model: AppModel
     @ObservedObject var together: Together
     @ObservedObject var book: BookPlayer
 
