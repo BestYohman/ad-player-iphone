@@ -63,9 +63,18 @@ jobs:
           name: ADPlayer
           path: ADPlayer.ipa
 
-      - name: Put it under Releases
+      - name: Put it under Releases (this version, and as latest)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          V=$(grep -m1 'CFBundleShortVersionString' project.yml | sed -E 's/.*"([^"]+)".*/\1/')
+          awk -v v="$V" '$0 ~ "^## "v" " {on=1; next} /^## / {if(on) exit} on' CHANGELOG.md > notes.md
+          printf '\nOn the iPhone: download ADPlayer.ipa on the PC, then install it with Sideloadly.\n' >> notes.md
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" ADPlayer.ipa --clobber
+            gh release edit "v$V" --notes-file notes.md --title "AD Player $V"
+          else
+            gh release create "v$V" ADPlayer.ipa --title "AD Player $V" --notes-file notes.md --target "$GITHUB_SHA" --latest=false
+          fi
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest ADPlayer.ipa --title "AD Player (latest)" --notes "Built $(date -u '+%Y-%m-%d %H:%M') UTC from ${GITHUB_SHA::7}. On the iPhone: download ADPlayer.ipa below, then in AltStore go to My Apps, press +, and choose it."
+          gh release create latest ADPlayer.ipa --title "AD Player $V (latest)" --notes-file notes.md
