@@ -63,6 +63,7 @@ final class BookPlayer: ObservableObject {
     private var retries = 0
     private var together = false
     private var pieces = false                // the book comes as pieces fetched onto the phone (newer PC)
+    private var offline: Offline.Saved?       // downloaded: every piece is already on the phone
     private var streamPieces = Set<Int>()     // pieces that couldn't be fetched: played straight from the PC
     private var fetchTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
@@ -218,16 +219,42 @@ final class BookPlayer: ObservableObject {
         reconnecting = false
         if !noplay { say("Getting \(label) ready.") }
 
+        offline = nil
+        let saved = Offline.shared.ready(id, "book")
         startTask = Task { [weak self] in
             do {
-                let b = try await api.get("api/play/books/book", ["id": id], as: BookDetail.self)
+                let b: BookDetail
+                var place: Double
+                var finished: Bool
+                if let s = saved, let d = s.detail, let local = try? JSONDecoder().decode(BookDetail.self, from: d) {
+                    // downloaded: plays from the phone; her place from the PC if it answers quickly, else the phone's
+                    b = local
+                    place = s.pos
+                    finished = false
+                    if !Places.pending(id), let fresh = await BookPlayer.quickDetail(api, id) {
+                        place = fresh.position
+                        finished = fresh.finished
+                    }
+                } else {
+                    b = try await api.get("api/play/books/book", ["id": id], as: BookDetail.self)
+                    place = b.position
+                    finished = b.finished
+                }
                 guard let self = self, gen == self.generation else { return }
                 guard !b.tracks.isEmpty else { throw APIError.server("That book has no audio.") }
                 self.title = b.title
                 self.author = b.author ?? ""
                 self.duration = b.duration
                 self.chapters = b.chapters
-                if let segs = b.segs, !segs.isEmpty {
+                if let s = saved, saved?.detail != nil {
+                    let list: [(String, Double, Double)] = (b.segs?.isEmpty == false) ? b.segs!.map { ($0.url, $0.start, $0.duration) }
+                                                                                     : b.tracks.map { ($0.url, $0.start, $0.duration) }
+                    self.tracks = list.map { x in
+                        BookTrack(start: x.1, duration: x.2, ino: "", mime: nil, codec: x.0.hasSuffix(".mp3") ? "mp3" : "aac", url: x.0, tx: "")
+                    }
+                    self.pieces = true
+                    self.offline = s
+                } else if let segs = b.segs, !segs.isEmpty {
                     // the piece it starts in is fetched onto the phone first, then the next ones while it plays
                     self.tracks = segs.map { s in
                         BookTrack(start: s.start, duration: s.duration, ino: "", mime: nil,
@@ -238,7 +265,7 @@ final class BookPlayer: ObservableObject {
                 } else {
                     self.tracks = b.tracks
                 }
-                var pos = at ?? ((resume && !b.finished) ? max(0, b.position - 2) : 0)
+                var pos = at ?? ((resume && !finished) ? max(0, place - 2) : 0)
                 if b.duration > 0 && pos >= b.duration - 2 { pos = 0 }
                 self.position = pos
                 let p = AVPlayer()
@@ -254,7 +281,9 @@ final class BookPlayer: ObservableObject {
                 }
                 let i = self.partIndex(pos)
                 self.load(i, pos - self.tracks[i].start, play: !noplay, announce: !noplay)
-                if let cover = b.cover { self.loadArtwork(api.media(cover), gen: gen) }
+                let coverFile = Offline.dir("book", id).appendingPathComponent("cover.jpg")
+                if self.offline != nil && FileManager.default.fileExists(atPath: coverFile.path) { self.loadArtwork(coverFile, gen: gen) }
+                else if let cover = b.cover { self.loadArtwork(api.media(cover), gen: gen) }
             } catch is CancellationError {
                 return
             } catch {
@@ -276,7 +305,7 @@ final class BookPlayer: ObservableObject {
         switching = true
         loadGeneration += 1
         let lg = loadGeneration
-        if pieces && BookParts.have(bookID, i, t.url) == nil && !streamPieces.contains(i) {
+        if pieces && localPiece(i) == nil && !streamPieces.contains(i) {
             let id = bookID
             fetchTask?.cancel()
             fetchTask = Task { [weak self] in
@@ -294,7 +323,7 @@ final class BookPlayer: ObservableObject {
         let direct = pieces || (!forceTx.contains(i) && BookPlayer.playsDirectly(t))
         base = direct ? 0 : off
         let path = direct ? t.url : t.tx + "?t=" + String(format: "%.1f", off)
-        let local = pieces ? BookParts.have(bookID, i, t.url) : nil
+        let local = pieces ? localPiece(i) : nil
         guard let url = local ?? api.media(path) else { return }
         statusObservation?.invalidate()
         statusObservation = nil
@@ -382,7 +411,7 @@ final class BookPlayer: ObservableObject {
 
     /// While it plays: the next two pieces are fetched onto the phone.
     private func prefetch(after i: Int) {
-        guard pieces, i + 1 < tracks.count else { return }
+        guard pieces, offline == nil, i + 1 < tracks.count else { return }
         prefetchTask?.cancel()
         let id = bookID, gen = generation, upto = min(i + 2, tracks.count - 1)
         let wanted = Array(tracks[(i + 1)...upto].enumerated()).map { (i + 1 + $0.offset, $0.element.url) }
@@ -631,6 +660,7 @@ final class BookPlayer: ObservableObject {
         lastSave = Date()
         let form = ["item": bookID, "pos": String(format: "%.1f", t), "duration": String(format: "%.1f", duration),
                     "finished": finished ? "1" : "0"]
+        Offline.shared.notePos(bookID, finished ? 0 : t)
         Places.send(api, "api/play/books/save", form)
     }
 
@@ -654,6 +684,24 @@ final class BookPlayer: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio, options: [])
         try? session.setActive(true)
+    }
+
+    /// A piece already on the phone: the download, or one fetched while playing.
+    private func localPiece(_ i: Int) -> URL? {
+        if let s = offline, let f = Offline.shared.file(s, i) { return f }
+        guard i >= 0, i < tracks.count else { return nil }
+        return BookParts.have(bookID, i, tracks[i].url)
+    }
+
+    /// The book from the PC, if it answers within a few seconds (a downloaded book doesn't wait for it).
+    static func quickDetail(_ api: API, _ id: String) async -> BookDetail? {
+        await withTaskGroup(of: BookDetail?.self) { g in
+            g.addTask { try? await api.get("api/play/books/book", ["id": id], as: BookDetail.self) }
+            g.addTask { try? await Task.sleep(nanoseconds: 4_000_000_000); return nil }
+            let first = await g.next() ?? nil
+            g.cancelAll()
+            return first
+        }
     }
 
     private func loadArtwork(_ url: URL?, gen: Int) {

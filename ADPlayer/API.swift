@@ -394,14 +394,14 @@ struct BookItemsResponse: Decodable {
     let items: [BookItem]
 }
 
-struct BookChapter: Decodable, Hashable {
+struct BookChapter: Codable, Hashable {
     let start: Double
     let end: Double
     let title: String
 }
 
 /// One file of a book. url plays the file as it is; tx is the PC's MP3 version (add ?t=seconds).
-struct BookTrack: Decodable, Hashable {
+struct BookTrack: Codable, Hashable {
     let start: Double
     let duration: Double
     let ino: String
@@ -411,7 +411,7 @@ struct BookTrack: Decodable, Hashable {
     let tx: String
 }
 
-struct BookDetail: Decodable {
+struct BookDetail: Codable {
     let id: String
     let title: String
     let author: String?
@@ -426,7 +426,7 @@ struct BookDetail: Decodable {
 }
 
 /// A piece of a book as the phone fetches it: a part as it is, or 10 minutes of a long file.
-struct BookSeg: Decodable, Hashable {
+struct BookSeg: Codable, Hashable {
     let start: Double
     let duration: Double
     let url: String

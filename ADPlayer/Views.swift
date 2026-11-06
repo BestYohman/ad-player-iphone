@@ -279,6 +279,12 @@ struct HomeView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink { DownloadsView() } label: { DownloadsLabel(offline: Offline.shared) }
+                } footer: {
+                    Text("Episodes, movies and audiobooks kept on this phone, to play with no connection.")
+                }
+
                 if !model.message.isEmpty {
                     Section("Last message") {
                         Text(model.message)
@@ -413,6 +419,11 @@ struct ItemRow: View {
                             Button("Start over") { model.play(item, resume: false) }
                                 .buttonStyle(.bordered)
                                 .accessibilityLabel("Start \(item.label) from the beginning")
+                        }
+                        if item.type == "Episode" || item.type == "Movie" || item.type == "Video" {
+                            DownloadButton(offline: Offline.shared, id: item.id, kind: "audio", label: item.label) {
+                                Offline.shared.download(item)
+                            }
                         }
                         actions
                     }
@@ -668,6 +679,94 @@ struct SearchView: View {
     }
 }
 
+// MARK: - Downloads
+
+struct DownloadsLabel: View {
+    @ObservedObject var offline: Offline
+
+    var body: some View {
+        let n = offline.items.count
+        let going = offline.items.filter { $0.state == "preparing" || $0.state == "downloading" }.count
+        Text("Downloads" + (n == 0 ? "" : ", \(n)") + (going > 0 ? ", \(going) on the way" : ""))
+    }
+}
+
+/// Download beside Play: says how it's going, and does nothing more once it's on its way.
+struct DownloadButton: View {
+    @ObservedObject var offline: Offline
+    let id: String
+    let kind: String
+    let label: String
+    let start: () -> Void
+
+    var body: some View {
+        let s = offline.find(id, kind)
+        let text: String = {
+            guard let s = s else { return "Download" }
+            switch s.state {
+            case "done": return "Downloaded"
+            case "failed": return "Download again"
+            case "preparing": return "Getting ready" + (s.progress > 0 ? " \(s.progress)%" : "")
+            default: return "Downloading" + (s.progress > 0 ? " \(s.progress)%" : "")
+            }
+        }()
+        Button(text) {
+            if let s = s, s.state != "failed" { offline.say("\(label): \(s.stateText).") } else { start() }
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(s == nil ? "Download \(label)" : "\(label): \(s!.stateText)")
+        .accessibilityHint(s == nil ? "Keeps it on this phone, to play with no connection." : "")
+    }
+}
+
+struct DownloadsView: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var offline = Offline.shared
+
+    var body: some View {
+        List {
+            if offline.items.isEmpty {
+                Text("Nothing downloaded yet. Use Download beside an episode, a movie or an audiobook.")
+            }
+            ForEach(Array(offline.items.reversed())) { s in
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        if s.done { model.playDownloaded(s) } else { offline.say("\(s.title): \(s.stateText).") }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title).foregroundColor(.primary)
+                            Text("\(s.kindText). \(s.stateText).").font(.footnote).foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint(s.done ? "Plays it on this phone." : "")
+                    HStack {
+                        if s.state == "failed" {
+                            Button("Try again") { offline.retry(s) }
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Try downloading \(s.title) again")
+                        }
+                        Button(s.done ? "Remove" : "Stop", role: .destructive) { offline.remove(s) }
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel((s.done ? "Remove the download of " : "Stop downloading ") + s.title)
+                    }
+                }
+            }
+            if !offline.items.isEmpty {
+                let total = offline.items.filter { $0.done }.reduce(Int64(0)) { $0 + $1.bytes }
+                if total > 0 {
+                    Section { Text("On this phone: \(Offline.size(total)).") }
+                }
+            }
+        }
+        .navigationTitle("Downloads")
+        .homeBar()
+        .onAppear { offline.resume() }
+    }
+}
+
 // MARK: - Now playing: only the controls
 
 struct NowPlayingView: View {
@@ -908,6 +1007,9 @@ struct BookRow: View {
                             Button("Chapters") { showChapters = true }
                                 .buttonStyle(.bordered)
                                 .accessibilityLabel("Chapters of \(item.label)")
+                        }
+                        DownloadButton(offline: Offline.shared, id: item.id, kind: "book", label: item.label) {
+                            Offline.shared.downloadBook(id: item.id, label: item.label)
                         }
                     }
                 }

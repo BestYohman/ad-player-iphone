@@ -70,6 +70,8 @@ final class AppModel: ObservableObject {
             Task { await self.loadContinueBooks() }
         }
         setUpRemoteControls()
+        Offline.shared.api = { [weak self] in self?.api }
+        Offline.shared.say = { [weak self] text in self?.say(text) }
         together.model = self
         // the screens follow playing together too
         forward = together.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
@@ -96,6 +98,7 @@ final class AppModel: ObservableObject {
         addressTask = Task {
             await self.chooseAddress(); self.phone.networkBack(); self.book.networkBack()
             if let api = self.api { await Places.flush(api) }
+            Offline.shared.resume()
         }
     }
 
@@ -313,6 +316,17 @@ final class AppModel: ObservableObject {
     func filterChoices(kind: String) async -> FilterChoices? {
         guard let api = api else { return nil }
         return try? await api.get("api/play/filters", ["kind": kind], as: FilterChoices.self)
+    }
+
+    /// A download plays on this phone (it's on the phone, not the PC).
+    func playDownloaded(_ s: Offline.Saved) {
+        if !isPhone { target = AppModel.phoneID }
+        if s.kind == "book" {
+            playBook(id: s.item, label: s.title, resume: true)
+        } else {
+            play(Item(id: s.item, type: s.itemType, label: s.title, length: nil, played: nil, resume: nil, resumeTicks: nil, hasAD: s.hasAD),
+                 resume: true)
+        }
     }
 
     /// Play together works on the phone: with a TV chosen, it moves to the phone first.
@@ -558,6 +572,7 @@ final class AppModel: ObservableObject {
             book.saveNow()
             return
         }
+        Offline.shared.resume()
         if api != nil && Date().timeIntervalSince(lastRefresh) > 30 {
             Task {
                 await self.chooseAddress()

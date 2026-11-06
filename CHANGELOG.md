@@ -3,6 +3,12 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.8.0 - 2026-11-06
+- Downloads: a Download button beside each episode, movie and audiobook keeps it on the phone, to play with no connection. For episodes and movies it keeps the audio description (or the soundtrack when there is none).
+- Downloads carry on in the background, even with the app closed, and pick up again when the app opens.
+- Home has Downloads: what's on the phone and how far each one has got; tap one to play it, or Remove it.
+- A downloaded one plays from the phone even when it's chosen from a list, and its place is sent to the PC once there's a connection.
+
 ## 1.7.0 - 2026-11-06
 - A Play together button beside each Play (episodes, movies, books) instead of the Play together switch. With a TV chosen, Play together moves to the phone by itself.
 - The lists are called Shows / Movies with description and Shows / Movies without description.

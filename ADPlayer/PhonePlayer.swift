@@ -107,6 +107,18 @@ final class PhonePlayer: ObservableObject {
         hasNext = item.type == "Episode"
         hasAD = true
         itemID = item.id
+        // downloaded: plays from the phone (no connection needed)
+        if startAt == nil, let s = Offline.shared.ready(item.id, "audio"), let f = Offline.shared.file(s, 0) {
+            title = s.title
+            hasAD = s.hasAD
+            hasNext = s.hasNext
+            duration = s.runtime
+            localFile = f
+            let server = (item.resumeTicks ?? 0) / 10_000_000
+            let at = !resume ? 0 : ((server > 0 && !Places.pending(item.id)) ? server : s.pos)
+            begin(url: f, at: at > 5 ? at : 0, gen: gen, play: true, announce: true)
+            return
+        }
         if !together { say("Getting the audio of \(item.label) ready.") }
 
         startTask = Task { [weak self] in
@@ -449,6 +461,7 @@ final class PhonePlayer: ObservableObject {
         lastSave = Date()
         var form = ["item": id, "pos": String(format: "%.1f", t)]
         if finished { form["finished"] = "1" }
+        Offline.shared.notePos(id, finished ? 0 : t)
         Places.send(api, "api/play/listen/save", form)
     }
 
@@ -595,6 +608,11 @@ enum Places {
             else { var f = form; f["_path"] = path; p[item] = f }
             UserDefaults.standard.set(p, forKey: key)
         }
+    }
+
+    /// A place for this item is still waiting to reach the PC (so the phone's own place is the newest).
+    static func pending(_ item: String) -> Bool {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]])?[item] != nil
     }
 
     /// Sends the places kept while the PC couldn't be reached.
