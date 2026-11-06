@@ -261,15 +261,28 @@ struct Item: Decodable, Identifiable, Hashable {
     let resume: String?
     let resumeTicks: Double?
     let hasAD: Bool?
+    var favorite: Bool? = nil
+    var requested: Bool? = nil
+    var count: Int? = nil
+    var text: String? = nil
+    var date: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, type, label, length, played, resume
+        case id, type, label, length, played, resume, favorite, requested, count, text, date
         case resumeTicks = "resume_ticks"
         case hasAD = "has_ad"
     }
 
     /// What VoiceOver reads for the row, e.g. "Friends, season 4 episode 2: The One with the Cat, 22 minutes, resumes at 5 minutes"
     var spoken: String {
+        if type == "Series" {
+            return [label, (count ?? 0) > 0 ? "\(count!) seasons" : "", hasAD == false ? "no audio description" : ""]
+                .filter { !$0.isEmpty }.joined(separator: ", ")
+        }
+        if type == "Season" {
+            return [label, (count ?? 0) > 0 ? "\(count!) episodes" : "", played == true ? "watched" : ""]
+                .filter { !$0.isEmpty }.joined(separator: ", ")
+        }
         var parts = [label]
         if let length = length, !length.isEmpty { parts.append(length) }
         if let resume = resume, !resume.isEmpty { parts.append("resumes at \(resume)") }

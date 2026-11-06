@@ -3,6 +3,13 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.6.0 - 2026-11-06
+- Home has the same layout as the AD Player web page: TV (Play on, Refresh the TV list), then Play - Audiobooks, Shows or Movies - and that one's search and lists.
+- Shows and Movies: Search, All shows / All movies, Favorites, Shows / Movies without audio description, Requests for audio description, and the ones in progress.
+- Audiobooks: Search, All books, Series, Authors, and Continue listening.
+- Add to favorites, and Ask for audio description for ones without it - as on the web page.
+- A "You" part at the end: who is signed in, Settings, Sign out.
+
 ## 1.5.3 - 2026-11-04
 - The new square AD logo as the app icon.
 

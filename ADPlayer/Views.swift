@@ -171,16 +171,28 @@ struct SignInView: View {
     }
 }
 
-// MARK: - Home: where to play, carry on, find something
+// MARK: - Home: the same order as the AD Player web page - where to play, what to play, then that kind's lists
 
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
     @State private var showSettings = false
+    @AppStorage("ad_what") private var what = "shows"          // books / shows / movies, like the web page's Play buttons
+    @State private var query = ""
+    @State private var searchFor: String?
+    @State private var progress: [Item] = []
+    @State private var progressLoading = false
+
+    private var kinds: [(String, String)] {
+        (model.booksSetUp ? [("books", "Audiobooks")] : []) + [("shows", "Shows"), ("movies", "Movies")]
+    }
+    private var shown: String { model.booksSetUp || what != "books" ? what : "shows" }
+    private var movies: Bool { shown == "movies" }
 
     var body: some View {
         NavigationStack {
             List {
                 InvitesSection(together: model.together)
+                NowPlayingRow(phone: model.phone, book: model.book)
 
                 Section {
                     Picker("Play on", selection: $model.target) {
@@ -193,11 +205,18 @@ struct HomeView: View {
                     Button("Refresh the TV list") {
                         Task { await model.refreshDevices(announce: true) }
                     }
+                    Picker("Play", selection: Binding(get: { shown }, set: { what = $0; query = "" })) {
+                        ForEach(kinds, id: \.0) { k in Text(k.1).tag(k.0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Play")
                     if model.isPhone {
                         Toggle("Play together", isOn: Binding(get: { model.together.enabled },
                                                               set: { model.together.enabled = $0
                                                                      model.announce($0 ? "Play together is on. What you start now also plays on the other person's phone once they join." : "Play together is off.") }))
                     }
+                } header: {
+                    Text("TV")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if model.isPhone {
@@ -209,40 +228,62 @@ struct HomeView: View {
                     }
                 }
 
-                NowPlayingRow(phone: model.phone, book: model.book)
-
-                Section("Continue watching") {
-                    if model.continueItems.isEmpty {
-                        Text(model.continueLoading ? "Loading…" : "Nothing in progress.")
-                    }
-                    ForEach(model.continueItems) { item in
-                        ItemRow(item: item)
-                    }
-                }
-
-                if model.booksSetUp {
-                    Section("Continue listening") {
-                        if model.continueBooks.isEmpty {
-                            Text(model.booksNote.isEmpty ? "No audiobook in progress." : model.booksNote)
-                        }
-                        ForEach(model.continueBooks) { item in
-                            BookRow(item: item)
-                        }
-                    }
-                }
-
-                Section("Find something") {
-                    NavigationLink("Shows") { ItemListView(kind: "shows", parent: nil, title: "Shows") }
-                    NavigationLink("Movies") { ItemListView(kind: "movies", parent: nil, title: "Movies") }
-                    NavigationLink("Search") { SearchView() }
-                }
-
-                if model.booksSetUp {
-                    Section("Audiobooks") {
+                if shown == "books" {
+                    Section {
+                        TextField("Search audiobooks", text: $query)
+                            .autocorrectionDisabled()
+                            .submitLabel(.search)
+                            .onSubmit { search() }
+                        Button("Search") { search() }
+                            .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
                         NavigationLink("All books") { BookListView(kind: "books_all", parent: nil, title: "All audiobooks") }
                         NavigationLink("Series") { BookListView(kind: "books_series", parent: nil, title: "Audiobook series") }
                         NavigationLink("Authors") { BookListView(kind: "books_authors", parent: nil, title: "Audiobook authors") }
-                        NavigationLink("Search audiobooks") { BookSearchView() }
+                    } header: {
+                        Text("Audiobooks")
+                    } footer: {
+                        Text("A title, author, narrator or series.")
+                    }
+                    Section("Continue listening") {
+                        if model.continueBooks.isEmpty {
+                            Text(model.booksNote.isEmpty ? "Nothing in progress." : model.booksNote)
+                        }
+                        ForEach(model.continueBooks) { item in BookRow(item: item) }
+                    }
+                } else {
+                    Section {
+                        TextField(movies ? "Search movies" : "Search shows", text: $query)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.search)
+                            .onSubmit { search() }
+                        Button("Search") { search() }
+                            .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
+                        NavigationLink(movies ? "All movies" : "All shows") {
+                            ItemListView(kind: shown, parent: nil, title: movies ? "Movies with audio description" : "Shows with audio description")
+                        }
+                        NavigationLink("Favorites") {
+                            ItemListView(kind: "favorites_\(shown)", parent: nil, title: movies ? "Favorite movies" : "Favorite shows",
+                                         empty: "No favorites yet. Use Add to favorites on a show or movie.")
+                        }
+                        NavigationLink(movies ? "Movies without audio description" : "Shows without audio description") {
+                            ItemListView(kind: "noad_\(shown)", parent: nil,
+                                         title: movies ? "Movies without audio description" : "Shows without audio description")
+                        }
+                        NavigationLink("Requests for audio description") {
+                            ItemListView(kind: "requests", parent: nil, title: "Requests for audio description",
+                                         empty: "Nothing asked for yet. Shows and movies without audio description have an Ask for audio description button.")
+                        }
+                    } header: {
+                        Text(movies ? "Movies" : "Shows")
+                    } footer: {
+                        if !movies { Text("For one episode, type the show, season and episode, like: friends 4 2") }
+                    }
+                    Section(movies ? "Movies in progress" : "Shows in progress") {
+                        if progress.isEmpty {
+                            Text(progressLoading ? "Loading…" : "Nothing in progress.")
+                        }
+                        ForEach(progress) { item in ItemRow(item: item) }
                     }
                 }
 
@@ -251,14 +292,26 @@ struct HomeView: View {
                         Text(model.message)
                     }
                 }
-            }
-            .navigationTitle("AD Player")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                Section("You") {
+                    if let name = model.me?.name, !name.isEmpty {
+                        Text("Signed in as \(name).")
+                    }
                     Button("Settings") { showSettings = true }
+                    if let name = model.me?.name, !name.isEmpty, !model.needSignIn {
+                        Button("Sign out") { model.signOut() }
+                    }
                 }
             }
-            .refreshable { await model.refreshAll() }
+            .navigationTitle("AD Player")
+            .navigationDestination(isPresented: Binding(get: { searchFor != nil }, set: { if !$0 { searchFor = nil } })) {
+                if let q = searchFor {
+                    if shown == "books" { BookSearchView(initial: q) } else { SearchView(kind: "search_\(shown)", initial: q) }
+                }
+            }
+            .task(id: shown) { await loadProgress() }
+            .onChange(of: model.continueItems) { _ in Task { await loadProgress() } }   // after Stop, a TV finishing…
+            .refreshable { await model.refreshAll(); await loadProgress() }
             .sheet(isPresented: $showSettings) {
                 SetupView(first: false).environmentObject(model)
             }
@@ -266,6 +319,19 @@ struct HomeView: View {
                 NowPlayingView(phone: model.phone, book: model.book).environmentObject(model)
             }
         }
+    }
+
+    private func search() {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { model.announce("Type something to search for."); return }
+        searchFor = q
+    }
+
+    private func loadProgress() async {
+        guard shown != "books" else { return }
+        progressLoading = true
+        defer { progressLoading = false }
+        if let items = try? await model.list(kind: "continue_\(shown)") { progress = items }
     }
 }
 
@@ -315,19 +381,26 @@ struct NowPlayingRow: View {
 struct ItemRow: View {
     @EnvironmentObject var model: AppModel
     let item: Item
+    @State private var favorite: Bool?
+    @State private var requested: Bool?
 
     var body: some View {
         switch item.type ?? "" {
+        case "Request":
+            Text("\(item.label): \(item.text ?? ""). Asked for on \(item.date ?? "").")
         case "Series":
-            NavigationLink(item.label) {
-                ItemListView(kind: "seasons", parent: item.id, title: item.label)
+            VStack(alignment: .leading, spacing: 6) {
+                NavigationLink(item.spoken) {
+                    ItemListView(kind: "seasons", parent: item.id, title: "\(item.label) seasons")
+                }
+                actions
             }
         case "Season":
             NavigationLink(item.spoken) {
                 ItemListView(kind: "episodes", parent: item.id, title: item.label)
             }
         default:
-            HStack {
+            VStack(alignment: .leading, spacing: 6) {
                 Button {
                     model.play(item, resume: true)
                 } label: {
@@ -337,10 +410,42 @@ struct ItemRow: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityHint(item.canResume ? "Plays from where you left off." : "Plays it.")
-                if item.canResume {
-                    Button("Start over") { model.play(item, resume: false) }
-                        .buttonStyle(.bordered)
+                if item.canResume || item.type == "Movie" || item.hasAD == false {
+                    HStack {
+                        if item.canResume {
+                            Button("Start over") { model.play(item, resume: false) }
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Start \(item.label) from the beginning")
+                        }
+                        actions
+                    }
                 }
+            }
+        }
+    }
+
+    /// Add to favorites (shows and movies) and Ask for audio description (ones without it), as on the web page.
+    @ViewBuilder private var actions: some View {
+        let fav = favorite ?? (item.favorite ?? false)
+        let asked = requested ?? (item.requested ?? false)
+        HStack {
+            if item.type == "Series" || item.type == "Movie" {
+                Button(fav ? "Remove from favorites" : "Add to favorites") {
+                    Task {
+                        if let m = await model.setFavorite(item, on: !fav) { favorite = !fav; model.announce(m) }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(fav ? "Remove \(item.label) from favorites" : "Add \(item.label) to favorites")
+            }
+            if item.hasAD == false {
+                Button(asked ? "Asked for audio description" : "Ask for audio description") {
+                    Task {
+                        if let m = await model.requestAD(item) { requested = true; model.announce(m) }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel((asked ? "Asked for audio description for " : "Ask for audio description for ") + item.label)
             }
         }
     }
@@ -351,6 +456,7 @@ struct ItemListView: View {
     let kind: String
     let parent: String?
     let title: String
+    var empty = "Nothing here."
     @State private var items: [Item] = []
     @State private var loading = true
     @State private var problem: String?
@@ -362,13 +468,13 @@ struct ItemListView: View {
             } else if let problem = problem {
                 Text(problem)
             } else if items.isEmpty {
-                Text("Nothing here.")
+                Text(empty)
             }
             ForEach(items) { item in
                 ItemRow(item: item)
             }
         }
-        .navigationTitle(title)
+        .navigationTitle(items.isEmpty ? title : "\(title) (\(items.count))")
         .task { await load() }
         .refreshable { await load() }
     }
@@ -387,6 +493,8 @@ struct ItemListView: View {
 
 struct SearchView: View {
     @EnvironmentObject var model: AppModel
+    var kind = "search"
+    var initial = ""
     @State private var text = ""
     @State private var items: [Item] = []
     @State private var note = "Type a show, movie or episode - for example friends 4 2 - then press Search."
@@ -415,7 +523,7 @@ struct SearchView: View {
             }
         }
         .navigationTitle("Search")
-        .onAppear { focused = true }
+        .onAppear { if !initial.isEmpty && text.isEmpty { text = initial; run() } else if initial.isEmpty { focused = true } }
     }
 
     private func run() {
@@ -425,7 +533,7 @@ struct SearchView: View {
         note = "Searching…"
         Task {
             do {
-                items = try await model.list(kind: "search", query: q)
+                items = try await model.list(kind: kind, query: q)
                 note = items.isEmpty ? "Nothing found for \(q)." : "\(items.count) found."
             } catch {
                 items = []
@@ -850,6 +958,7 @@ struct ChapterList: View {
 
 struct BookSearchView: View {
     @EnvironmentObject var model: AppModel
+    var initial = ""
     @State private var text = ""
     @State private var items: [BookItem] = []
     @State private var note = "Type a title, author, narrator or series, then press Search."
@@ -877,7 +986,7 @@ struct BookSearchView: View {
             }
         }
         .navigationTitle("Search audiobooks")
-        .onAppear { focused = true }
+        .onAppear { if !initial.isEmpty && text.isEmpty { text = initial; run() } else if initial.isEmpty { focused = true } }
     }
 
     private func run() {

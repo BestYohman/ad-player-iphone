@@ -336,6 +336,26 @@ final class AppModel: ObservableObject {
     // MARK: bookmarks
 
     /// Keeps the place it's at now as a bookmark (named after the chapter and time).
+    /// Add to / remove from favorites (as on the web page). Returns the PC's message, or nil after saying the problem.
+    func setFavorite(_ item: Item, on: Bool) async -> String? {
+        guard let api = api else { return nil }
+        do {
+            return try await api.post("api/play/favorite", ["item": item.id, "on": on ? "1" : "0"], as: MessageResponse.self).message
+        } catch {
+            say(error.localizedDescription); return nil
+        }
+    }
+
+    /// Ask for audio description for a show or movie that has none.
+    func requestAD(_ item: Item) async -> String? {
+        guard let api = api else { return nil }
+        do {
+            return try await api.post("api/play/request", ["item": item.id], as: MessageResponse.self).message
+        } catch {
+            say(error.localizedDescription); return nil
+        }
+    }
+
     func addBookmark(bookID: String, at: Double) {
         guard let api = api, !bookID.isEmpty else { return }
         Task {
