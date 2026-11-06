@@ -210,18 +210,10 @@ struct HomeView: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Play")
-                    if model.isPhone {
-                        Toggle("Play together", isOn: Binding(get: { model.together.enabled },
-                                                              set: { model.together.enabled = $0
-                                                                     model.announce($0 ? "Play together is on. What you start now also plays on the other person's phone once they join." : "Play together is off.") }))
-                    }
                 } header: {
                     Text("TV")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        if model.isPhone {
-                            Text("Play together: what you start here also plays on another person's phone, in step. They get a Join button.")
-                        }
                         if !model.otherDevices.isEmpty {
                             Text("Connected but can't be controlled from here: \(model.otherDevices.joined(separator: ", ")). Use the Emby app on that TV instead.")
                         }
@@ -259,20 +251,20 @@ struct HomeView: View {
                             .onSubmit { search() }
                         Button("Search") { search() }
                             .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
-                        NavigationLink(movies ? "All movies" : "All shows") {
-                            ItemListView(kind: shown, parent: nil, title: movies ? "Movies with audio description" : "Shows with audio description")
+                        NavigationLink(movies ? "Movies with description" : "Shows with description") {
+                            ItemListView(kind: shown, parent: nil, title: movies ? "Movies with description" : "Shows with description")
                         }
                         NavigationLink("Favorites") {
                             ItemListView(kind: "favorites_\(shown)", parent: nil, title: movies ? "Favorite movies" : "Favorite shows",
                                          empty: "No favorites yet. Use Add to favorites on a show or movie.")
                         }
-                        NavigationLink(movies ? "Movies without audio description" : "Shows without audio description") {
+                        NavigationLink(movies ? "Movies without description" : "Shows without description") {
                             ItemListView(kind: "noad_\(shown)", parent: nil,
-                                         title: movies ? "Movies without audio description" : "Shows without audio description")
+                                         title: movies ? "Movies without description" : "Shows without description")
                         }
                         NavigationLink("Requests for audio description") {
                             ItemListView(kind: "requests", parent: nil, title: "Requests for audio description",
-                                         empty: "Nothing asked for yet. Shows and movies without audio description have an Ask for audio description button.")
+                                         empty: "Nothing asked for yet. Shows and movies without description have an Ask for audio description button.")
                         }
                     } header: {
                         Text(movies ? "Movies" : "Shows")
@@ -319,6 +311,7 @@ struct HomeView: View {
                 NowPlayingView(phone: model.phone, book: model.book).environmentObject(model)
             }
         }
+        .id(model.homeToken)
     }
 
     private func search() {
@@ -410,8 +403,12 @@ struct ItemRow: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityHint(item.canResume ? "Plays from where you left off." : "Plays it.")
-                if item.canResume || item.type == "Movie" || item.hasAD == false {
+                ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
+                        Button("Play together") { model.play(item, resume: true, together: true) }
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel("Play \(item.label) together")
+                            .accessibilityHint("It also plays on another person's phone, in step. They get a Join button.")
                         if item.canResume {
                             Button("Start over") { model.play(item, resume: false) }
                                 .buttonStyle(.bordered)
@@ -460,35 +457,161 @@ struct ItemListView: View {
     @State private var items: [Item] = []
     @State private var loading = true
     @State private var problem: String?
+    @State private var view = ListView()
+    @State private var viewLoaded = false
+    @State private var showSort = false
+
+    private var sortable: Bool { ListView.applies(kind) }
 
     var body: some View {
         List {
-            if loading && items.isEmpty {
-                Text("Loading…")
-            } else if let problem = problem {
-                Text(problem)
-            } else if items.isEmpty {
-                Text(empty)
+            if sortable {
+                Section {
+                    Button(view.summary) { showSort = true }
+                        .accessibilityHint("Opens sort by and the filters.")
+                }
             }
-            ForEach(items) { item in
-                ItemRow(item: item)
+            Section {
+                if loading && items.isEmpty {
+                    Text("Loading…")
+                } else if let problem = problem {
+                    Text(problem)
+                } else if items.isEmpty {
+                    Text(sortable && view.filtersOn > 0 ? "Nothing matches these filters." : empty)
+                }
+                ForEach(items) { item in
+                    ItemRow(item: item)
+                }
             }
         }
         .navigationTitle(items.isEmpty ? title : "\(title) (\(items.count))")
-        .task { await load() }
+        .homeBar()
+        .task {
+            if !viewLoaded { view = ListView.load(kind); viewLoaded = true }
+            await load()
+        }
         .refreshable { await load() }
+        .sheet(isPresented: $showSort) {
+            SortFilterView(kind: kind, view: $view).environmentObject(model)
+        }
+        .onChange(of: view) { v in
+            v.save(kind)
+            Task { await load(announce: true) }
+        }
     }
 
-    private func load() async {
+    private func load(announce: Bool = false) async {
         loading = true
         do {
-            items = try await model.list(kind: kind, parent: parent)
+            items = try await model.list(kind: kind, parent: parent, view: sortable ? view : nil)
             problem = nil
+            if announce {
+                model.announce(items.isEmpty ? (view.filtersOn > 0 ? "Nothing matches these filters." : "Nothing here.")
+                                             : "\(items.count) item\(items.count == 1 ? "" : "s").")
+            }
         } catch {
             problem = error.localizedDescription
         }
         loading = false
     }
+}
+
+/// Sort by and the filters for a shows or movies list (as on the web page).
+struct SortFilterView: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let kind: String
+    @Binding var view: ListView
+    @State private var choices: FilterChoices?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Sort") {
+                    Picker("Sort by", selection: Binding(get: { view.sort }, set: { k in
+                        view.sort = k
+                        view.desc = ListView.sorts.first { $0.0 == k }?.2 ?? false
+                    })) {
+                        ForEach(ListView.sorts, id: \.0) { s in Text(s.1).tag(s.0) }
+                    }
+                    if view.sort != "random" {
+                        let w = ListView.ways(view.sort)
+                        Picker("Order", selection: $view.desc) {
+                            Text(w.0).tag(false)
+                            Text(w.1).tag(true)
+                        }
+                    }
+                }
+                Section {
+                    Picker("Watched", selection: $view.state) {
+                        ForEach(ListView.states, id: \.0) { s in Text(s.1).tag(s.0) }
+                    }
+                    if !kind.hasPrefix("favorites") {
+                        Toggle("Favorites only", isOn: $view.fav)
+                    }
+                    Picker("Genre", selection: $view.genre) {
+                        Text("Any").tag("")
+                        ForEach(options(choices?.genres, view.genre), id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Parental rating", selection: $view.rating) {
+                        Text("Any").tag("")
+                        ForEach(options(choices?.ratings, view.rating), id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Year", selection: $view.year) {
+                        Text("Any").tag("")
+                        ForEach(options(choices?.years, view.year), id: \.self) { Text($0).tag($0) }
+                    }
+                    if view.filtersOn > 0 {
+                        Button("Clear filters") {
+                            view = ListView(sort: view.sort, desc: view.desc)
+                            model.announce("Filters cleared.")
+                        }
+                    }
+                } header: {
+                    Text("Filters")
+                } footer: {
+                    if choices == nil { Text("Getting the genres, ratings and years…") }
+                }
+            }
+            .navigationTitle("Sort and filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task { choices = await model.filterChoices(kind: kind) ?? FilterChoices.empty }
+        }
+    }
+
+    /// The list's choices, plus the one chosen before (so it still shows if it's no longer there).
+    private func options(_ list: [String]?, _ chosen: String) -> [String] {
+        let l = list ?? []
+        return chosen.isEmpty || l.contains(chosen) ? l : [chosen] + l
+    }
+}
+
+/// Home at the bottom of the screen: back to the start from any list.
+struct HomeBar: ViewModifier {
+    @EnvironmentObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content.toolbar {
+            ToolbarItem(placement: .bottomBar) {
+                Button {
+                    model.goHome()
+                } label: {
+                    Label("Home", systemImage: "house")
+                        .labelStyle(.titleAndIcon)
+                }
+                .accessibilityHint("Goes back to the start.")
+            }
+        }
+    }
+}
+
+extension View {
+    func homeBar() -> some View { modifier(HomeBar()) }
 }
 
 struct SearchView: View {
@@ -523,6 +646,7 @@ struct SearchView: View {
             }
         }
         .navigationTitle("Search")
+        .homeBar()
         .onAppear { if !initial.isEmpty && text.isEmpty { text = initial; run() } else if initial.isEmpty { focused = true } }
     }
 
@@ -566,6 +690,7 @@ struct NowPlayingView: View {
             }
             .navigationTitle("Now playing")
             .navigationBarTitleDisplayMode(.inline)
+            .homeBar()
         }
     }
 
@@ -768,8 +893,12 @@ struct BookRow: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityHint(item.canResume ? "Plays from where you left off." : "Plays it.")
-                if item.canResume || item.finished == true || (item.chapters ?? 0) > 1 {
+                Group {
                     HStack {
+                        Button("Play together") { model.playBook(id: item.id, label: item.label, resume: true, together: true) }
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel("Play \(item.label) together")
+                            .accessibilityHint("It also plays on another person's phone, in step. They get a Join button.")
                         if item.canResume || item.finished == true {
                             Button("Start over") { model.playBook(id: item.id, label: item.label, resume: false, at: 0) }
                                 .buttonStyle(.bordered)
@@ -821,6 +950,7 @@ struct BookListView: View {
             }
         }
         .navigationTitle(title)
+        .homeBar()
         .task { await load() }
         .refreshable { await load() }
     }
@@ -986,6 +1116,7 @@ struct BookSearchView: View {
             }
         }
         .navigationTitle("Search audiobooks")
+        .homeBar()
         .onAppear { if !initial.isEmpty && text.isEmpty { text = initial; run() } else if initial.isEmpty { focused = true } }
     }
 

@@ -3,6 +3,13 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.7.0 - 2026-11-06
+- A Play together button beside each Play (episodes, movies, books) instead of the Play together switch. With a TV chosen, Play together moves to the phone by itself.
+- The lists are called Shows / Movies with description and Shows / Movies without description.
+- Sort and filter on the shows and movies lists: sort by, order, watched, favorites only, genre, parental rating, year. Kept for each list.
+- Home at the bottom of every screen, to go straight back to the start.
+- Fixed: an episode or movie without audio description closed instead of playing - it plays its soundtrack now.
+
 ## 1.6.0 - 2026-11-06
 - Home has the same layout as the AD Player web page: TV (Play on, Refresh the TV list), then Play - Audiobooks, Shows or Movies - and that one's search and lists.
 - Shows and Movies: Search, All shows / All movies, Favorites, Shows / Movies without audio description, Requests for audio description, and the ones in progress.

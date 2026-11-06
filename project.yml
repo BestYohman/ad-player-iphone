@@ -13,8 +13,8 @@ targets:
       path: ADPlayer/Info.plist
       properties:
         CFBundleDisplayName: AD Player
-        CFBundleShortVersionString: "1.6.0"
-        CFBundleVersion: "5"
+        CFBundleShortVersionString: "1.7.0"
+        CFBundleVersion: "6"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

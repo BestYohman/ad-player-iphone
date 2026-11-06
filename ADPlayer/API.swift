@@ -276,7 +276,7 @@ struct Item: Decodable, Identifiable, Hashable {
     /// What VoiceOver reads for the row, e.g. "Friends, season 4 episode 2: The One with the Cat, 22 minutes, resumes at 5 minutes"
     var spoken: String {
         if type == "Series" {
-            return [label, (count ?? 0) > 0 ? "\(count!) seasons" : "", hasAD == false ? "no audio description" : ""]
+            return [label, (count ?? 0) > 0 ? "\(count!) seasons" : "", hasAD == false ? "without description" : ""]
                 .filter { !$0.isEmpty }.joined(separator: ", ")
         }
         if type == "Season" {
@@ -287,7 +287,7 @@ struct Item: Decodable, Identifiable, Hashable {
         if let length = length, !length.isEmpty { parts.append(length) }
         if let resume = resume, !resume.isEmpty { parts.append("resumes at \(resume)") }
         if played == true { parts.append("watched") }
-        if hasAD == false { parts.append("no audio description") }
+        if hasAD == false { parts.append("without description") }
         return parts.joined(separator: ", ")
     }
 
@@ -518,4 +518,89 @@ struct BookmarkEntry: Decodable, Identifiable, Hashable {
 struct BookmarksResponse: Decodable {
     let bookmarks: [BookmarkEntry]
     let message: String?
+}
+
+// MARK: - Sort and filter (the shows and movies lists, as on the web page)
+
+/// How a list is sorted and filtered; kept on the phone for each list.
+struct ListView: Codable, Equatable {
+    var sort = "title"
+    var desc = false
+    var state = ""
+    var fav = false
+    var genre = ""
+    var rating = ""
+    var year = ""
+
+    /// key, name, newest / highest first when chosen
+    static let sorts: [(String, String, Bool)] = [
+        ("title", "Title", false), ("added", "Date added", true), ("played", "Date played", true),
+        ("released", "Release date", true), ("year", "Year", true), ("runtime", "Runtime", false),
+        ("critic", "Critic rating", true), ("rating", "Community rating", true), ("parental", "Parental rating", false),
+        ("plays", "Plays", true), ("random", "Random", false)]
+    static let states: [(String, String)] = [("", "Any"), ("unplayed", "Not watched"), ("played", "Watched"), ("resumable", "In progress")]
+
+    static func ways(_ sort: String) -> (String, String) {
+        switch sort {
+        case "title": return ("A to Z", "Z to A")
+        case "added", "played", "released", "year": return ("Oldest first", "Newest first")
+        case "runtime": return ("Shortest first", "Longest first")
+        default: return ("Lowest first", "Highest first")
+        }
+    }
+
+    var filtersOn: Int { [!state.isEmpty, fav, !genre.isEmpty, !rating.isEmpty, !year.isEmpty].filter { $0 }.count }
+
+    var query: [String: String?] {
+        var q: [String: String?] = ["sort": sort, "desc": desc ? "1" : "0"]
+        if !state.isEmpty { q["state"] = state }
+        if fav { q["fav"] = "1" }
+        if !genre.isEmpty { q["genre"] = genre }
+        if !rating.isEmpty { q["rating"] = rating }
+        if !year.isEmpty { q["year"] = year }
+        return q
+    }
+
+    var summary: String {
+        let name = ListView.sorts.first { $0.0 == sort }?.1 ?? "Title"
+        let w = ListView.ways(sort)
+        var way = desc ? w.1 : w.0
+        if sort != "title" { way = way.lowercased() }
+        let n = filtersOn
+        return "Sort and filter: \(name)" + (sort == "random" ? "" : ", \(way)") + (n > 0 ? ", \(n) filter\(n == 1 ? "" : "s") on" : "")
+    }
+
+    static func load(_ kind: String) -> ListView {
+        guard let d = UserDefaults.standard.data(forKey: "listview_\(kind)"),
+              let v = try? JSONDecoder().decode(ListView.self, from: d) else { return ListView() }
+        return v
+    }
+
+    func save(_ kind: String) {
+        if let d = try? JSONEncoder().encode(self) { UserDefaults.standard.set(d, forKey: "listview_\(kind)") }
+    }
+
+    /// The lists that can be sorted and filtered.
+    static func applies(_ kind: String) -> Bool {
+        ["shows", "movies", "noad_shows", "noad_movies", "favorites_shows", "favorites_movies"].contains(kind)
+    }
+}
+
+struct FilterChoices: Decodable {
+    var genres: [String] = []
+    var ratings: [String] = []
+    var years: [String] = []
+
+    enum CodingKeys: String, CodingKey { case genres, ratings, years }
+
+    init() {}
+    static var empty: FilterChoices { FilterChoices() }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        genres = (try? c.decode([String].self, forKey: .genres)) ?? []
+        ratings = (try? c.decode([String].self, forKey: .ratings)) ?? []
+        if let ys = try? c.decode([Int].self, forKey: .years) { years = ys.map(String.init) }
+        else { years = (try? c.decode([String].self, forKey: .years)) ?? [] }
+    }
 }

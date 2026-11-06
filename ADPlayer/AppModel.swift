@@ -301,10 +301,30 @@ final class AppModel: ObservableObject {
         if let items = try? await list(kind: "continue") { continueItems = items }
     }
 
-    func list(kind: String, parent: String? = nil, query: String? = nil) async throws -> [Item] {
+    func list(kind: String, parent: String? = nil, query: String? = nil, view: ListView? = nil) async throws -> [Item] {
         guard let api = api else { throw APIError.badAddress }
-        let r = try await api.get("api/play/list", ["kind": kind, "device": target, "parent": parent, "q": query], as: ItemsResponse.self)
+        var q: [String: String?] = ["kind": kind, "device": target, "parent": parent, "q": query]
+        if let view = view { for (k, v) in view.query { q[k] = v } }
+        let r = try await api.get("api/play/list", q, as: ItemsResponse.self)
         return r.items
+    }
+
+    /// What a list's filters can choose from (its genres, parental ratings and years).
+    func filterChoices(kind: String) async -> FilterChoices? {
+        guard let api = api else { return nil }
+        return try? await api.get("api/play/filters", ["kind": kind], as: FilterChoices.self)
+    }
+
+    /// Play together works on the phone: with a TV chosen, it moves to the phone first.
+    func phoneForTogether() {
+        if !isPhone { target = AppModel.phoneID }
+    }
+
+    /// Home at the bottom of each screen: back to the start (the lists close).
+    @Published var homeToken = UUID()
+    func goHome() {
+        showPlayer = false
+        homeToken = UUID()
     }
 
     // MARK: audiobooks
@@ -383,13 +403,14 @@ final class AppModel: ObservableObject {
     }
 
     /// at: start this many seconds into the book (a chapter); otherwise her place when resume is true.
-    func playBook(id: String, label: String, resume: Bool, at: Double? = nil) {
-        if together.active && together.isBook && together.room?.item == id, let at = at {
+    func playBook(id: String, label: String, resume: Bool, at: Double? = nil, together startTogether: Bool = false) {
+        if together.active && together.isBook && together.room?.item == id, let at = at, !startTogether {
             together.seekTo(at)                                    // a chapter of the book we're listening to together
             showPlayer = true
             return
         }
-        if isPhone && together.enabled {
+        if startTogether {
+            phoneForTogether()
             together.startBook(id: id, label: label, resume: resume, at: at)
             return
         }
@@ -422,8 +443,9 @@ final class AppModel: ObservableObject {
 
     // MARK: playing
 
-    func play(_ item: Item, resume: Bool) {
-        if isPhone && together.enabled {
+    func play(_ item: Item, resume: Bool, together startTogether: Bool = false) {
+        if startTogether {
+            phoneForTogether()
             together.startShow(item, resume: resume)
             return
         }

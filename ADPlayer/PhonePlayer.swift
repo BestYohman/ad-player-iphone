@@ -112,7 +112,7 @@ final class PhonePlayer: ObservableObject {
         startTask = Task { [weak self] in
             do {
                 var job = try await api.post("api/play/listen/prepare",
-                                             ["item": item.id, "fmt": "hls", "any": startAt != nil ? "1" : "0"], as: ListenJob.self)
+                                             ["item": item.id, "fmt": "hls", "any": "1"], as: ListenJob.self)
                 guard let self = self, gen == self.generation else { return }
                 let resumeAt = startAt ?? (resume ? (job.resumeTicks ?? 0) / 10_000_000 : 0)
                 self.title = job.title ?? item.label
@@ -219,7 +219,7 @@ final class PhonePlayer: ObservableObject {
                 self.updateNowPlaying()
                 if announce {
                     let from = start > 0 ? " from \(Speak.position(start))" : ""
-                    self.say("Playing \(self.title) on this phone\(from)" + (self.hasAD ? ", with audio description." : "."))
+                    self.say("Playing \(self.title) on this phone\(from)" + (self.hasAD ? ", with audio description." : ", without description."))
                 }
             }
         }
