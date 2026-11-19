@@ -33,6 +33,10 @@ final class Together: ObservableObject {
     private var expectPause = Date.distantPast
     private var jseq = 0                    // the last skip (back, forward, a chapter) this phone went to
     private var waitingAhead = false        // ahead of the others: waiting here for them
+    private var readyIseq = -1              // the item the PC has heard this phone is ready with (it then says where to go)
+    private var held = false                // paused here (headphones out, a call, Pause): not started again until the room has paused
+    private var heldAsk = Date.distantPast
+    private var rejoining = false
 
     let cid: String = {
         if let c = UserDefaults.standard.string(forKey: "cid"), !c.isEmpty { return c }
@@ -122,6 +126,9 @@ final class Together: ObservableObject {
         msgSeq = r.msgSeq ?? 0
         jseq = r.jseq ?? 0
         waitingAhead = false
+        readyIseq = -1
+        held = false
+        rejoining = false
         skips = 0
         stalls = 0
         invites = []
@@ -144,26 +151,38 @@ final class Together: ObservableObject {
 
     private func beat() async {
         guard let api = api, active else { return }
+        keepAwake()
         let ready = mediaReady
+        let id = roomID
         let t0 = Date()
         let form = ["cid": cid, "room": roomID, "pos": String(format: "%.2f", ready ? mediaTime : 0),
                     "ready": ready ? "1" : "0", "buf": isStuck ? "1" : "0", "iseq": String(iseqLoaded),
                     "sk": String(skips), "stl": String(stalls),
                     // which skip this phone has got to, and whether it is still loading there (the others wait for it)
-                    "jseq": String(jseq), "ld": (!ready || loading) ? "1" : "0"]
-        guard let r = try? await api.post("api/play/together/beat", form, as: Room.self) else { return }
+                    "jseq": String(jseq), "ld": (!ready || loading) ? "1" : "0",
+                    // how long a beat takes there and back, in seconds (the PC allows for it when it works out who is behind)
+                    "rtt": String(format: "%.3f", rtt)]
+        guard let r = try? await api.post("api/play/together/beat", form, as: Room.self), roomID == id else { return }
         let took = Date().timeIntervalSince(t0)
         if took < 3 { rtt = rtt * 0.7 + took * 0.3 }
-        apply(r)
+        apply(r, readyBeat: ready)
     }
 
-    private func apply(_ r: Room) {
+    /// Paused or waiting with the screen locked: a silent sound keeps the app going (so it keeps beating).
+    private func keepAwake() {
+        if active && mediaRate == 0 { KeepAlive.shared.start() } else { KeepAlive.shared.stop() }
+    }
+
+    private func apply(_ r: Room, readyBeat: Bool = false) {
         guard active else { return }
         if r.gone == true {
-            end(r.left == true ? nil : (r.msg ?? "Playing together has ended."))
+            let msg = r.msg ?? "Playing together has ended."
+            if r.left == true { end(nil) } else { rejoin(msg) }
             return
         }
         guard r.id != nil else { return }
+        // the first answer to "ready": a phone that joined late (or is back) is told there to go to where the others are
+        if readyBeat && (r.iseq ?? 0) == iseqLoaded { readyIseq = iseqLoaded }
         room = r
         kind = r.kind ?? kind
         if let ms = r.msgSeq, ms != msgSeq {
@@ -189,6 +208,7 @@ final class Together: ObservableObject {
                             length: nil, played: nil, resume: nil, resumeTicks: nil, hasAD: nil)
             phone?.start(item, resume: false, together: pos)
         }
+        if kind == "book" { book?.roomSpeed = r.rate ?? 1 } else { phone?.roomSpeed = r.rate ?? 1 }
         iseqLoaded = seq
     }
 
@@ -228,11 +248,13 @@ final class Together: ObservableObject {
     private func play(rate: Double) {
         expectPlay = Date()
         if kind == "book" { book?.play(rate: rate) } else { phone?.play(rate: rate) }
+        keepAwake()
     }
 
     private func pause() {
         expectPause = Date()
         if kind == "book" { book?.pause(quiet: true) } else { phone?.pause(quiet: true) }
+        keepAwake()
     }
 
     /// Nobody is skipped ahead to catch up (they may be in different places - nothing should be missed): a phone that
@@ -241,7 +263,20 @@ final class Together: ObservableObject {
     /// until every phone has got there and loaded.
     private func sync(_ r: Room) {
         let base = (r.rate ?? 1) > 0 ? (r.rate ?? 1) : 1
-        let run = r.run ?? false
+        if kind == "book" { book?.roomSpeed = base } else { phone?.roomSpeed = base }
+        // paused here (headphones out, a call, Pause): not started again on the loudspeaker until the room has paused
+        // too (asked again every 5 seconds if the pause didn't get through) or she presses Play
+        if held {
+            if !(r.want ?? false) { held = false }
+            else if Date().timeIntervalSince(heldAsk) > 5 { heldAsk = Date(); control("pause", quiet: true) }
+        }
+        // ready, but the PC hasn't answered that yet: it may say to go to where the others are first - nothing is
+        // played from here until then (she hasn't heard any of it yet, so nothing is missed)
+        if readyIseq != iseqLoaded {
+            if mediaRate != 0 { pause() }
+            return
+        }
+        let run = (r.run ?? false) && !held
         // a little ahead by how late this phone's sound reaches her ears (Bluetooth headphones), so both hear it together
         let target = (r.pos ?? 0) + (run ? rtt / 2 * base : 0) + outputDelay * base
         let diff = mediaTime - target
@@ -286,20 +321,40 @@ final class Together: ObservableObject {
 
     // MARK: buttons (on screen, lock screen and headphones)
 
-    func control(_ action: String, _ extra: [String: String] = [:], okText: String? = nil) {
+    /// failText: said when the PC can't be reached. quiet: nothing is said if it goes wrong.
+    func control(_ action: String, _ extra: [String: String] = [:], okText: String? = nil, failText: String? = nil, quiet: Bool = false) {
         guard let api = api, active else { return }
-        var form = ["cid": cid, "room": roomID, "action": action]
+        let id = roomID
+        var form = ["cid": cid, "room": id, "action": action]
         for (k, v) in extra { form[k] = v }
         Task {
             do {
                 let r = try await api.post("api/play/together/control", form, as: Room.self)
+                guard self.roomID == id else { return }
                 if let t = okText { self.say(t) }
                 self.apply(r)
             } catch {
-                self.say(error.localizedDescription)
+                guard self.roomID == id, !quiet else { return }
+                switch error {
+                case APIError.server(_), APIError.signIn(_): self.say(error.localizedDescription)
+                default: self.say(failText ?? error.localizedDescription)
+                }
             }
         }
     }
+
+    /// Paused on this phone straight away, then for everyone (asked again every 5 seconds until the room has paused,
+    /// so it isn't started again here - on the loudspeaker, say - in the meantime).
+    func pauseHere(_ text: String) {
+        guard active else { return }
+        held = true
+        heldAsk = Date()
+        pause()
+        control("pause", okText: text, failText: "Paused here. Couldn't reach the PC - the others may still be playing.")
+    }
+
+    /// The room is playing (or about to), as far as this phone knows.
+    var roomPlaying: Bool { (room?.want ?? false) && !held }
 
     /// playpause, play, pause, back30, fwd30, next, prev, stop
     func command(_ c0: String) {
@@ -309,9 +364,13 @@ final class Together: ObservableObject {
         let waiting = r?.waiting ?? false
         var c = c0
         if c == "stop" { stopAll(); return }
-        if c == "playpause" { c = (want && !waiting) ? "pause" : "play" }
-        if c == "play" { control("play", okText: waiting ? "Starting." : "Playing."); return }
-        if c == "pause" { control("pause", okText: "Paused."); return }
+        if c == "playpause" { c = (want && !waiting && !held) ? "pause" : "play" }
+        if c == "play" {
+            held = false
+            control("play", okText: waiting ? "Starting." : "Playing.", failText: "Couldn't reach the PC - it didn't start.")
+            return
+        }
+        if c == "pause" { pauseHere("Paused."); return }
         let now = mediaReady ? mediaTime : (r?.pos ?? 0)
         if c == "back30" || c == "fwd30" {
             let np = max(0, now + (c == "back30" ? -30 : 30))
@@ -347,15 +406,28 @@ final class Together: ObservableObject {
         control("ended", ["item": room?.item ?? ""])
     }
 
-    /// Stop for everyone: the other phones stop too (and are told who stopped it).
+    /// Stop for everyone: the other phones stop too (and are told who stopped it). Tried a few times; she's told
+    /// only once the PC has it, or that it couldn't be reached (the others may then still be playing).
     func stopAll() {
-        guard active, let api = api else { return }
+        guard active, api != nil else { return }
         let id = roomID
         seenInvites.insert(id)
         finish()
-        say("Stopped for everyone.")
         Task {
-            _ = try? await api.post("api/play/together/control", ["cid": cid, "room": id, "action": "stop"], as: Room.self)
+            var ok = false
+            for i in 0..<4 {
+                if i > 0 { try? await Task.sleep(nanoseconds: UInt64(2 * i) * 1_000_000_000) }
+                guard let api = self.api else { break }
+                do {
+                    _ = try await api.post("api/play/together/control", ["cid": self.cid, "room": id, "action": "stop"], as: Room.self)
+                    ok = true
+                } catch APIError.signIn(_) {
+                    break
+                } catch {
+                }
+                if ok { break }
+            }
+            self.say(ok ? "Stopped for everyone." : "Couldn't reach the PC - the others may still be playing.")
             await self.pollInvites()
         }
     }
@@ -378,15 +450,47 @@ final class Together: ObservableObject {
         Task { await self.pollInvites() }
     }
 
+    /// The PC let go of this phone (no signal for a few minutes): it joins the same room again by itself, then goes
+    /// to where the others are. Only when the room has really ended does it stop.
+    private func rejoin(_ msg: String) {
+        guard !rejoining, let api = api else { return }
+        rejoining = true
+        let id = roomID
+        Task {
+            do {
+                let r = try await api.post("api/play/together/join", ["cid": self.cid, "room": id, "mode": "audio"], as: Room.self)
+                guard self.roomID == id else { return }
+                self.rejoining = false
+                if r.gone == true || r.id == nil { self.end(msg); return }
+                self.jseq = -1                  // (so it goes straight to where the others are)
+                self.readyIseq = -1
+                self.waitingAhead = false
+                self.msgSeq = r.msgSeq ?? self.msgSeq
+                self.say("Back with the others.")
+                self.apply(r)
+            } catch APIError.server(_) {
+                guard self.roomID == id else { return }
+                self.rejoining = false
+                self.end(msg)                   // the room is over
+            } catch {
+                guard self.roomID == id else { return }
+                self.rejoining = false          // no connection yet: the next beat tries again
+            }
+        }
+    }
+
     private func finish() {
         beatTask?.cancel()
         beatTask = nil
         roomID = ""
         room = nil
+        held = false
         phone?.togetherEnded = nil
         book?.togetherEnded = nil
         stopPlayers()
+        KeepAlive.shared.stop()
         model?.showPlayer = false
+        model?.soundIdle()
     }
 
     // MARK: what to say
@@ -408,6 +512,8 @@ final class Together: ObservableObject {
             let notReady = (r.notReady ?? []).joined(separator: " and ")
             state = others.isEmpty ? "Waiting for someone to join. Press Play to start now."
                                    : "Waiting for \(notReady.isEmpty ? names : notReady) to be ready."
+        } else if held {
+            state = "Paused."
         } else if let h = r.hold, !h.isEmpty {
             state = "Waiting a moment for \(h.joined(separator: " and ")) to catch up."
         } else {
@@ -422,7 +528,7 @@ final class Together: ObservableObject {
         return text
     }
 
-    var paused: Bool { !((room?.want ?? false) && !(room?.waiting ?? false)) }
+    var paused: Bool { held || !((room?.want ?? false) && !(room?.waiting ?? false)) }
     var hasNextEpisode: Bool { kind != "book" && (room?.hasNext ?? false) }
 
     // MARK: invitations

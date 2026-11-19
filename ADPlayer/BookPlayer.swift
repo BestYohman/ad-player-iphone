@@ -67,21 +67,24 @@ final class BookPlayer: ObservableObject {
     private var streamPieces = Set<Int>()     // pieces that couldn't be fetched: played straight from the PC
     private var fetchTask: Task<Void, Never>?
     private var prefetchTask: Task<Void, Never>?
-
-    init() {
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            // after a phone call or Siri: carry on if iOS says to
-            guard let info = note.userInfo,
-                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .ended,
-                  let optionsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt,
-                  AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume) else { return }
-            Task { @MainActor in
-                guard let self = self, self.active, !self.preparing else { return }
-                self.play()
-            }
-        }
+    private var wantPlay = false              // what the buttons asked for while a piece loads (it plays, or stays paused)
+    private var lastPlaying = Date.distantPast
+    private var startArgs: (id: String, label: String, at: Double?)?
+    private var togetherFails = 0
+    /// Listening together: the room's speed (each new piece starts at it, and the lock screen shows it).
+    var roomSpeed: Double? {
+        didSet { if roomSpeed != oldValue { updateNowPlaying() } }
     }
+
+    init() {}
+
+    /// The buttons can work it.
+    var canControl: Bool { active && !preparing && player != nil }
+
+    /// Playing now, or a moment ago (iPhone may already have paused it when a call or the headphones come in).
+    var wasPlaying: Bool { canControl && ((player?.rate ?? 0) != 0 || (switching && wantPlay) || Date().timeIntervalSince(lastPlaying) < 2.5) }
+
+    private var playSpeed: Double { together ? (roomSpeed ?? 1) : speed }
 
     nonisolated private static func savedSpeed() -> Double {
         let v = UserDefaults.standard.double(forKey: "bookSpeed")
@@ -159,6 +162,7 @@ final class BookPlayer: ObservableObject {
     /// Listening together: plays at this speed (the shared speed, a little faster or slower to keep in step).
     func play(rate r: Double) {
         guard active, !preparing, let p = player else { return }
+        wantPlay = true
         p.defaultRate = Float(r)
         p.rate = Float(r)
     }
@@ -215,8 +219,14 @@ final class BookPlayer: ObservableObject {
         artwork = nil
         chapterShown = -2
         together = noplay
+        if startArgs?.id != id || !noplay { togetherFails = 0 }
+        startArgs = (id, label, at)
         retries = 0
         reconnecting = false
+        wantPlay = !noplay
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: label,
+                                                           MPMediaItemPropertyArtist: "Getting it ready",
+                                                           MPNowPlayingInfoPropertyPlaybackRate: 0.0]
         if !noplay { say("Getting \(label) ready.") }
 
         offline = nil
@@ -239,6 +249,8 @@ final class BookPlayer: ObservableObject {
                     b = try await api.get("api/play/books/book", ["id": id], as: BookDetail.self)
                     place = b.position
                     finished = b.finished
+                    // a place kept on the phone that the PC hasn't had yet is the newest
+                    if let mine = Places.pendingPos(id) { place = mine; finished = false }
                 }
                 guard let self = self, gen == self.generation else { return }
                 guard !b.tracks.isEmpty else { throw APIError.server("That book has no audio.") }
@@ -268,17 +280,7 @@ final class BookPlayer: ObservableObject {
                 var pos = at ?? ((resume && !finished) ? max(0, place - 2) : 0)
                 if b.duration > 0 && pos >= b.duration - 2 { pos = 0 }
                 self.position = pos
-                let p = AVPlayer()
-                p.allowsExternalPlayback = true
-                p.defaultRate = Float(self.speed)
-                self.player = p
-                self.controlObservation = p.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
-                    let status = observed.timeControlStatus
-                    Task { @MainActor in self?.controlChanged(status) }
-                }
-                self.timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] _ in
-                    Task { @MainActor in self?.tick() }
-                }
+                self.makePlayer()
                 let i = self.partIndex(pos)
                 self.load(i, pos - self.tracks[i].start, play: !noplay, announce: !noplay)
                 let coverFile = Offline.dir("book", id).appendingPathComponent("cover.jpg")
@@ -289,10 +291,55 @@ final class BookPlayer: ObservableObject {
             } catch {
                 guard let self = self, gen == self.generation else { return }
                 let message = error.localizedDescription
+                if self.together { self.togetherFailed(message); return }
                 self.stop(saving: false, quiet: true, notify: true)
                 self.say(message)
             }
         }
+    }
+
+    private func makePlayer() {
+        let p = AVPlayer()
+        p.allowsExternalPlayback = true
+        p.defaultRate = Float(playSpeed)
+        player = p
+        controlObservation = p.observe(\.timeControlStatus, options: [.new]) { [weak self] observed, _ in
+            let status = observed.timeControlStatus
+            Task { @MainActor in self?.controlChanged(status) }
+        }
+        timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    /// Listening together, getting the book ready went wrong: tried again in a little while (the others wait for
+    /// this phone - the screen stays, and Leave still works).
+    private func togetherFailed(_ message: String) {
+        guard together, let a = startArgs else { return }
+        togetherFails += 1
+        let n = togetherFails
+        if n == 1 { say(message + " Trying again.") }
+        let at = switching || preparing ? (a.at ?? position) : currentTime()
+        let gen = generation
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(min(30, 5 * n)) * 1_000_000_000)
+            guard let self = self, gen == self.generation, self.together, self.active else { return }
+            self.retryTask = nil
+            self.start(id: a.id, label: a.label, resume: false, at: at, noplay: true)
+        }
+    }
+
+    /// iPhone's sound system restarted (it happens, rarely): the player is made again at the same place.
+    func mediaReset() {
+        guard active, !preparing, player != nil, !tracks.isEmpty, part < tracks.count else { return }
+        configureAudioSession()
+        let pos = switching ? tracks[part].start + pendingOffset : position
+        let play = (!paused || (switching && wantPlay)) && !together
+        tearDown()
+        makePlayer()
+        let i = partIndex(pos)
+        load(i, pos - tracks[i].start, play: play)
     }
 
     /// Loads one file of the book, starting `offset` seconds into it.
@@ -303,10 +350,12 @@ final class BookPlayer: ObservableObject {
         part = i
         pendingOffset = off
         switching = true
+        wantPlay = play
         loadGeneration += 1
         let lg = loadGeneration
         if pieces && localPiece(i) == nil && !streamPieces.contains(i) {
             let id = bookID
+            p.pause()                                     // the piece it was on doesn't carry on meanwhile
             fetchTask?.cancel()
             fetchTask = Task { [weak self] in
                 guard let self = self, let u = api.media(t.url) else { return }
@@ -316,7 +365,7 @@ final class BookPlayer: ObservableObject {
                     self.streamPieces.insert(i)
                     if !self.together { self.say("The connection is slow - playing straight from the PC.") }
                 }
-                self.load(i, off, play: play, announce: announce)
+                self.load(i, off, play: self.wantPlay, announce: announce)      // paused meanwhile: stays paused
             }
             return
         }
@@ -364,6 +413,7 @@ final class BookPlayer: ObservableObject {
                     return
                 }
                 let name = title
+                if together { togetherFailed("This phone couldn't play \(name)."); return }
                 stop(saving: false, quiet: true, notify: true)
                 say("This phone couldn't play \(name).")
                 return
@@ -374,6 +424,7 @@ final class BookPlayer: ObservableObject {
                 return
             }
             let name = title
+            if together { togetherFailed("This phone couldn't play \(name)."); return }
             stop(saving: false, quiet: true, notify: true)
             say("This phone couldn't play \(name).")
             return
@@ -395,8 +446,9 @@ final class BookPlayer: ObservableObject {
         if reconnecting { say("Back again.") }
         reconnecting = false
         retries = 0
-        if play {
-            p.defaultRate = Float(speed)
+        togetherFails = 0
+        if wantPlay {
+            p.defaultRate = Float(playSpeed)
             p.play()
         }
         position = currentTime()
@@ -479,13 +531,21 @@ final class BookPlayer: ObservableObject {
 
     /// The PC's address changed (home Wi-Fi / away): carry on at the new address.
     func rebase() {
-        guard active, !preparing else { return }
+        guard active, !preparing, !switching, part < tracks.count else { return }
+        if pieces && !streamPieces.contains(part) && localPiece(part) != nil { return }     // on the phone: nothing to do
         reloadHere(play: (player?.rate ?? 0) != 0)
     }
 
     private func controlChanged(_ status: AVPlayer.TimeControlStatus) {
         guard !switching else { return }
+        let was = paused
         paused = status == .paused
+        if status == .playing { lastPlaying = Date() }
+        // paused (by anything: a button, a call, the headphones): her place is kept straight away
+        // (not at the very end - that's kept as finished)
+        if paused && !was && Date().timeIntervalSince(lastSave) > 1 && !(duration > 0 && currentTime() > duration - 3) {
+            save(finished: false)
+        }
         updateNowPlaying()
     }
 
@@ -493,6 +553,7 @@ final class BookPlayer: ObservableObject {
         guard active, !preparing, !switching else { return }
         position = currentTime()
         let playing = (player?.rate ?? 0) != 0
+        if playing { lastPlaying = Date() }
         if playing && Date().timeIntervalSince(lastSave) > 30 { save(finished: false) }
         let timeUp = sleepAt.map { Date() >= $0 } ?? false
         let chapterOver = sleepPosition.map { position >= $0 - 0.5 } ?? false
@@ -514,7 +575,7 @@ final class BookPlayer: ObservableObject {
 
     func togglePause(quiet: Bool = false) {
         guard active, !preparing, let p = player else { return }
-        if p.rate == 0 {
+        if switching ? !wantPlay : p.rate == 0 {
             play()
             if !quiet { say("Playing.") }
         } else {
@@ -524,6 +585,8 @@ final class BookPlayer: ObservableObject {
 
     func pause(quiet: Bool = false) {
         guard active, let p = player else { return }
+        wantPlay = false
+        if switching { paused = true }
         p.pause()
         save(finished: false)
         if !quiet { say("Paused.") }
@@ -531,8 +594,11 @@ final class BookPlayer: ObservableObject {
 
     func play() {
         guard active, !preparing, let p = player else { return }
+        wantPlay = true
         if reconnecting { networkBack(); return }
-        p.defaultRate = Float(speed)
+        if switching { paused = false; return }           // it plays once the piece is ready
+        configureAudioSession()
+        p.defaultRate = Float(playSpeed)
         p.play()
     }
 
@@ -541,7 +607,7 @@ final class BookPlayer: ObservableObject {
         let pos = max(0, duration > 0 ? min(target, duration - 1) : target)
         position = pos
         let i = partIndex(pos)
-        let wasPlaying = p.rate != 0 || switching
+        let wasPlaying = p.rate != 0 || (switching && wantPlay)
         if i == part && !switching && !forceTx.contains(i) && BookPlayer.playsDirectly(tracks[i]) {
             p.seek(to: CMTime(seconds: pos - tracks[i].start, preferredTimescale: 600)) { [weak self] _ in
                 Task { @MainActor in self?.updateNowPlaying() }
@@ -634,6 +700,8 @@ final class BookPlayer: ObservableObject {
         tearDown()
         reconnecting = false
         together = false
+        roomSpeed = nil
+        wantPlay = false
         active = false
         preparing = false
         paused = false
@@ -662,6 +730,9 @@ final class BookPlayer: ObservableObject {
                     "finished": finished ? "1" : "0"]
         Offline.shared.notePos(bookID, finished ? 0 : t)
         Places.send(api, "api/play/books/save", form)
+        if finished { LastPlay.clear(bookID) } else {
+            LastPlay.note(LastPlay(kind: "book", item: bookID, title: title, type: "Book", hasAD: nil, pos: t, duration: duration))
+        }
     }
 
     private func tearDown() {
@@ -681,9 +752,7 @@ final class BookPlayer: ObservableObject {
     }
 
     private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [])
-        try? session.setActive(true)
+        if let problem = Sound.activate() { say(problem) }
     }
 
     /// A piece already on the phone: the download, or one fetched while playing.
@@ -727,11 +796,12 @@ final class BookPlayer: ObservableObject {
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = pos
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(p.rate)
-        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = speed
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = playSpeed
         if let a = artwork { info[MPMediaItemPropertyArtwork] = a }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        // next and previous (headphones, the car) are 30 seconds forward and back; chapters are chosen in the app
         let c = MPRemoteCommandCenter.shared()
-        c.nextTrackCommand.isEnabled = !chapters.isEmpty
-        c.previousTrackCommand.isEnabled = !chapters.isEmpty
+        c.nextTrackCommand.isEnabled = true
+        c.previousTrackCommand.isEnabled = true
     }
 }

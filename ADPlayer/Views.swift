@@ -931,6 +931,7 @@ struct TogetherControls: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var together: Together
     @ObservedObject var book: BookPlayer
+    @State private var askStop = false
 
     var body: some View {
         Section {
@@ -953,7 +954,15 @@ struct TogetherControls: View {
             if together.hasNextEpisode {
                 Button("Next episode") { together.command("next") }
             }
-            Button("Stop for everyone") { together.stopAll() }
+            // asked first: it stops the others too
+            Button("Stop for everyone") { askStop = true }
+                .confirmationDialog("Stop for everyone?", isPresented: $askStop, titleVisibility: .visible) {
+                    Button("Stop for everyone", role: .destructive) { together.stopAll() }
+                    Button("Leave") { together.leave(quiet: false) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Leave stops it on this phone only. The others carry on.")
+                }
             Button("Leave - the others carry on") { together.leave(quiet: false) }
         }
         if together.isBook {

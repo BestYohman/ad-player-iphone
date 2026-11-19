@@ -4,6 +4,7 @@ import UIKit
 import MediaPlayer
 import Network
 import Combine
+import AVFoundation
 
 /// Everything the screens share: the PC's address, the chosen TV (or this phone), what's playing.
 @MainActor
@@ -52,6 +53,7 @@ final class AppModel: ObservableObject {
     private var tvStartedAt = Date.distantPast
     private var tvMisses = 0
     private var lastRefresh = Date.distantPast
+    private var interruptedPlaying = false
 
     init() {
         phone = PhonePlayer()
@@ -62,6 +64,7 @@ final class AppModel: ObservableObject {
         phone.onEnded = { [weak self] in
             guard let self = self else { return }
             if self.isPhone && !self.book.active { self.showPlayer = false }
+            self.soundIdle()
             Task { await self.loadContinue() }
         }
         book.api = { [weak self] in self?.api }
@@ -69,9 +72,12 @@ final class AppModel: ObservableObject {
         book.onEnded = { [weak self] in
             guard let self = self else { return }
             if self.isPhone && !self.phone.active { self.showPlayer = false }
+            self.soundIdle()
             Task { await self.loadContinueBooks() }
         }
         setUpRemoteControls()
+        setUpSoundEvents()
+        restoreNowPlaying()
         Offline.shared.api = { [weak self] in self?.api }
         Offline.shared.say = { [weak self] text in self?.say(text) }
         together.model = self
@@ -662,49 +668,38 @@ final class AppModel: ObservableObject {
     // MARK: lock screen, Control Center and headphone buttons
 
     /// One set of handlers for both players: they go to whichever is playing.
+    /// Next and previous (AirPods double and triple press, the car, the lock screen) are 30 seconds forward and back:
+    /// a press never moves her far from her place. Episodes and chapters are chosen with the app's own buttons.
     private func setUpRemoteControls() {
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("play") }
-            return .success
-        }
-        c.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("pause") }
-            return .success
-        }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("toggle") }
-            return .success
-        }
+        c.playCommand.addTarget { [weak self] _ in self?.handle("play") ?? .commandFailed }
+        c.pauseCommand.addTarget { [weak self] _ in self?.handle("pause") ?? .commandFailed }
+        c.togglePlayPauseCommand.addTarget { [weak self] _ in self?.handle("toggle") ?? .commandFailed }
         c.skipForwardCommand.preferredIntervals = [30]
-        c.skipForwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("fwd") }
-            return .success
-        }
+        c.skipForwardCommand.addTarget { [weak self] _ in self?.handle("fwd") ?? .commandFailed }
         c.skipBackwardCommand.preferredIntervals = [30]
-        c.skipBackwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("back") }
-            return .success
-        }
-        c.nextTrackCommand.isEnabled = false
-        c.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("next") }
-            return .success
-        }
-        c.previousTrackCommand.isEnabled = false
-        c.previousTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.remote("prev") }
-            return .success
-        }
+        c.skipBackwardCommand.addTarget { [weak self] _ in self?.handle("back") ?? .commandFailed }
+        c.nextTrackCommand.isEnabled = true
+        c.nextTrackCommand.addTarget { [weak self] _ in self?.handle("fwd") ?? .commandFailed }
+        c.previousTrackCommand.isEnabled = true
+        c.previousTrackCommand.addTarget { [weak self] _ in self?.handle("back") ?? .commandFailed }
         c.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            let t = e.positionTime
-            Task { @MainActor in self?.remote("seek", t) }
-            return .success
+            return self?.handle("seek", e.positionTime) ?? .commandFailed
         }
     }
 
-    private func remote(_ action: String, _ value: Double = 0) {
+    /// iPhone calls these on the main thread; the answer says whether there was anything to work.
+    nonisolated private func handle(_ action: String, _ value: Double = 0) -> MPRemoteCommandHandlerStatus {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated { self.remote(action, value) }
+        }
+        Task { @MainActor in _ = self.remote(action, value) }
+        return .success
+    }
+
+    @discardableResult
+    private func remote(_ action: String, _ value: Double = 0) -> MPRemoteCommandHandlerStatus {
         if together.active {
             switch action {
             case "play": together.command("play")
@@ -712,36 +707,154 @@ final class AppModel: ObservableObject {
             case "toggle": together.command("playpause")
             case "fwd": together.command("fwd30")
             case "back": together.command("back30")
-            case "next": together.command("next")
-            case "prev": together.command("prev")
             case "seek": together.seekTo(value)
-            default: break
+            default: return .commandFailed
             }
-            return
+            return .success
         }
         if book.active {
+            guard book.canControl else { return .commandFailed }
             switch action {
             case "play": book.play()
             case "pause": book.pause(quiet: true)
             case "toggle": book.togglePause(quiet: true)
             case "fwd": book.skip(30, quiet: true)
             case "back": book.skip(-30, quiet: true)
-            case "next": book.nextChapter(quiet: true)
-            case "prev": book.previousChapter(quiet: true)
             case "seek": book.seek(to: value)
-            default: break
+            default: return .commandFailed
             }
-        } else if phone.active {
+            return .success
+        }
+        if phone.active {
+            guard phone.canControl else { return .commandFailed }
             switch action {
             case "play": phone.play()
             case "pause": phone.pause(quiet: true)
             case "toggle": phone.togglePause(quiet: true)
             case "fwd": phone.skip(30, quiet: true)
             case "back": phone.skip(-30, quiet: true)
-            case "next": phone.next()
             case "seek": phone.seek(to: value, quiet: true)
-            default: break
+            default: return .commandFailed
             }
+            return .success
+        }
+        // nothing loaded (the app was closed, or the phone restarted): Play carries on with the last one
+        if action == "play" || action == "toggle" { return resumeLast() ? .success : .noActionableNowPlayingItem }
+        return .noActionableNowPlayingItem
+    }
+
+    /// Carries on with the last thing played on this phone, from her place.
+    @discardableResult
+    func resumeLast() -> Bool {
+        guard !phoneBusy, !together.active, let l = LastPlay.load(), api != nil else { return false }
+        if !isPhone { target = AppModel.phoneID }
+        showPlayer = true
+        if l.kind == "book" {
+            book.start(id: l.item, label: l.title, resume: true, at: nil)
+        } else {
+            phone.start(Item(id: l.item, type: l.type, label: l.title, length: nil, played: nil, resume: nil, resumeTicks: nil,
+                             hasAD: l.hasAD), resume: true)
+        }
+        return true
+    }
+
+    /// The lock screen shows the last thing played (after the app was closed), so Play there carries on with it.
+    private func restoreNowPlaying() {
+        guard !phoneBusy, let l = LastPlay.load() else { return }
+        var info: [String: Any] = [MPMediaItemPropertyTitle: l.title,
+                                   MPMediaItemPropertyArtist: l.kind == "book" ? "Audiobook" : (l.hasAD == false ? "Soundtrack" : "Audio description"),
+                                   MPNowPlayingInfoPropertyElapsedPlaybackTime: l.pos,
+                                   MPNowPlayingInfoPropertyPlaybackRate: 0.0]
+        if l.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = l.duration }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    // MARK: calls, Siri, headphones coming out, the app closing
+
+    private func setUpSoundEvents() {
+        let n = NotificationCenter.default
+        n.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            let info = note.userInfo ?? [:]
+            let type = (info[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap { AVAudioSession.InterruptionType(rawValue: $0) }
+            let reason = (info[AVAudioSessionInterruptionReasonKey] as? UInt).flatMap { AVAudioSession.InterruptionReason(rawValue: $0) }
+            let resume = (info[AVAudioSessionInterruptionOptionKey] as? UInt).map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) } ?? false
+            Task { @MainActor in self?.interruption(type, suspended: reason == .appWasSuspended, resume: resume) }
+        }
+        n.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap { AVAudioSession.RouteChangeReason(rawValue: $0) }
+            guard reason == .oldDeviceUnavailable else { return }
+            Task { @MainActor in self?.headphonesGone() }
+        }
+        n.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.mediaReset() }
+        }
+        n.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            // her place is kept on the phone straight away (sent to the PC when it can be)
+            MainActor.assumeIsolated {
+                self?.phone.saveNow()
+                self?.book.saveNow()
+            }
+        }
+    }
+
+    /// A phone call or Siri: her place is kept; playing together, it pauses for everyone. Afterwards it carries on
+    /// only if it was playing and iPhone says to (a book together: the others decide).
+    private func interruption(_ type: AVAudioSession.InterruptionType?, suspended: Bool, resume: Bool) {
+        guard let type = type else { return }
+        if type == .began {
+            if suspended { return }                     // (the app was only asleep - nothing was interrupted)
+            phone.saveNow()
+            book.saveNow()
+            if together.active {
+                interruptedPlaying = together.roomPlaying
+                if interruptedPlaying { together.pauseHere("Paused for everyone.") }
+            } else {
+                interruptedPlaying = phone.wasPlaying || book.wasPlaying
+            }
+            return
+        }
+        let wasPlaying = interruptedPlaying
+        interruptedPlaying = false
+        guard wasPlaying, resume else { return }
+        if together.active {
+            if !together.isBook { together.command("play") }
+            return
+        }
+        if book.active { book.play() } else if phone.active { phone.play() }
+    }
+
+    /// Headphones taken out or Bluetooth lost: it pauses (for everyone, playing together), so it doesn't carry on
+    /// out loud on the phone's speaker.
+    private func headphonesGone() {
+        if together.active {
+            if together.roomPlaying { together.pauseHere("Paused for everyone - headphones disconnected.") }
+            return
+        }
+        if book.active && book.canControl {
+            let was = book.wasPlaying
+            book.pause(quiet: true)
+            if was { say("Paused - headphones disconnected.") }
+        } else if phone.active && phone.canControl {
+            let was = phone.wasPlaying
+            phone.pause(quiet: true)
+            if was { say("Paused - headphones disconnected.") }
+        }
+    }
+
+    /// iPhone's sound system restarted: the players and the sound are set up again.
+    private func mediaReset() {
+        KeepAlive.shared.reset()
+        if phone.active { phone.mediaReset() }
+        if book.active { book.mediaReset() }
+    }
+
+    /// Nothing plays any more: the sound is let go, so other apps can carry on.
+    func soundIdle() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !self.phone.active, !self.book.active, !self.together.active else { return }
+            KeepAlive.shared.stop()
+            Sound.deactivate()
         }
     }
 }

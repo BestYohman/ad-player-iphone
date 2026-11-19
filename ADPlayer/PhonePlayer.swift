@@ -43,23 +43,21 @@ final class PhonePlayer: ObservableObject {
     private var generation = 0
     private var didStart = false
     private var retries = 0
-    private var together = false
+    private(set) var together = false
     private var pendingStart: Double = 0
-
-    init() {
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            // after a phone call or Siri: carry on if iOS says to
-            guard let info = note.userInfo,
-                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .ended,
-                  let optionsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt,
-                  AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume) else { return }
-            Task { @MainActor in
-                guard let self = self, self.active, !self.together else { return }
-                self.player?.play()
-            }
-        }
+    private var anyAudio = "0"                        // "1": the soundtrack when there's no audio description
+    private var lastPlaying = Date.distantPast
+    // playing together: getting the audio ready again after a problem (the room waits for this phone)
+    private var togetherItem: Item?
+    private var togetherAt: Double = 0
+    private var togetherSince = Date()
+    private var togetherFails = 0
+    /// Playing together: the room's speed (for the lock screen).
+    var roomSpeed: Double? {
+        didSet { if roomSpeed != oldValue { updateNowPlaying() } }
     }
+
+    init() {}
 
     var statusText: String {
         if !active { return "Nothing is playing on this phone." }
@@ -82,6 +80,12 @@ final class PhonePlayer: ObservableObject {
 
     var currentItemID: String? { itemID }
 
+    /// The buttons can work it (it has started).
+    var canControl: Bool { active && didStart && player != nil }
+
+    /// Playing now, or a moment ago (iPhone may already have paused it when a call or the headphones come in).
+    var wasPlaying: Bool { canControl && ((player?.rate ?? 0) != 0 || Date().timeIntervalSince(lastPlaying) < 2.5) }
+
     func currentTime() -> Double {
         let t = player?.currentTime().seconds ?? position
         return t.isFinite ? t : position
@@ -90,12 +94,20 @@ final class PhonePlayer: ObservableObject {
     // MARK: starting
 
     /// together: the place to get ready at, without playing (the shared clock says when).
-    func start(_ item: Item, resume: Bool, together startAt: Double? = nil) {
+    /// retry: playing together, getting it ready again after a problem (not a new item).
+    func start(_ item: Item, resume: Bool, together startAt: Double? = nil, retry: Bool = false) {
         stop(saving: true, quiet: true, notify: false)
         guard let api = api() else { return }
         generation += 1
         let gen = generation
         together = startAt != nil
+        if together {
+            togetherItem = item
+            togetherAt = startAt ?? 0
+            if !retry { togetherSince = Date(); togetherFails = 0 }
+        } else {
+            togetherItem = nil
+        }
         configureAudioSession()
         active = true
         preparing = true
@@ -107,6 +119,12 @@ final class PhonePlayer: ObservableObject {
         hasNext = item.type == "Episode"
         hasAD = true
         itemID = item.id
+        // the lock screen: this one (getting ready), not the one before
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: item.label,
+                                                           MPMediaItemPropertyArtist: "Getting it ready",
+                                                           MPNowPlayingInfoPropertyPlaybackRate: 0.0]
+        // only the audio description, unless playing together (everyone hears something) or it has none
+        anyAudio = (together || item.hasAD == false) ? "1" : "0"
         // downloaded: plays from the phone (no connection needed)
         if startAt == nil, let s = Offline.shared.ready(item.id, "audio"), let f = Offline.shared.file(s, 0) {
             title = s.title
@@ -119,29 +137,62 @@ final class PhonePlayer: ObservableObject {
             begin(url: f, at: at > 5 ? at : 0, gen: gen, play: true, announce: true)
             return
         }
-        if !together { say("Getting the audio of \(item.label) ready.") }
+        if !together {
+            say(item.hasAD == false ? "No audio description – playing the soundtrack." : "Getting the audio of \(item.label) ready.")
+        }
 
+        let startAny = anyAudio
         startTask = Task { [weak self] in
             do {
-                var job = try await api.post("api/play/listen/prepare",
-                                             ["item": item.id, "fmt": "hls", "any": "1"], as: ListenJob.self)
+                var soundtrack = startAny
+                func prepare() async throws -> ListenJob {
+                    try await api.post("api/play/listen/prepare", ["item": item.id, "fmt": "hls", "any": soundtrack], as: ListenJob.self)
+                }
+                var job = try await prepare()
                 guard let self = self, gen == self.generation else { return }
-                let resumeAt = startAt ?? (resume ? (job.resumeTicks ?? 0) / 10_000_000 : 0)
+                if soundtrack == "0" && job.hasAD == false {
+                    // it has no audio description track: the soundtrack instead
+                    soundtrack = "1"
+                    self.anyAudio = "1"
+                    self.say("No audio description – playing the soundtrack.")
+                    job = try await prepare()
+                    guard gen == self.generation else { return }
+                }
+                // her place: one the PC hasn't had yet (no connection when it was saved) is the newest
+                let serverAt = (job.resumeTicks ?? 0) / 10_000_000
+                let resumeAt = startAt ?? (resume ? (Places.pendingPos(item.id) ?? serverAt) : 0)
                 self.title = job.title ?? item.label
                 self.duration = (job.runtimeTicks ?? 0) / 10_000_000
                 self.hasNext = job.hasNext ?? self.hasNext
                 self.hasAD = job.hasAD ?? true
                 self.jobID = job.id
+                var readySince: Date?
+                var askedAgain = false
                 // The PC makes the audio in small pieces; playing can start once the first ones exist
                 // (or, when carrying on part way through, once it has got past that point).
                 while true {
                     if job.state == "failed" { throw APIError.server(job.error ?? "Couldn't get the audio ready.") }
                     let farEnough = resumeAt <= 5 || (job.encodedSeconds ?? 0) >= resumeAt + 15
+                    let canStream = job.url != nil && (job.state == "ready" || ((job.playable ?? false) && farEnough))
                     // playing together: the whole audio comes onto the phone first (so the network can't make
                     // anyone wait later); on her own it starts as soon as the first part is made
                     if startAt != nil {
                         if job.state == "ready" && job.fullURL != nil { break }
-                    } else if job.url != nil && (job.state == "ready" || ((job.playable ?? false) && farEnough)) { break }
+                        // ready, but the whole file isn't there (it couldn't be made): asked for once more, then streamed
+                        if job.state == "ready" {
+                            if readySince == nil { readySince = Date() }
+                            if !askedAgain, Date().timeIntervalSince(readySince ?? Date()) > 15 {
+                                askedAgain = true
+                                job = try await prepare()
+                                guard gen == self.generation else { return }
+                                self.jobID = job.id
+                                continue
+                            }
+                            if Date().timeIntervalSince(readySince ?? Date()) > 45 && canStream { break }
+                        }
+                        // still not on the phone after a minute (or after a problem): streamed from the PC
+                        if canStream && (Date().timeIntervalSince(self.togetherSince) > 60 || self.togetherFails > 0) { break }
+                    } else if canStream { break }
                     self.progress = Int(job.progress ?? 0)
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                     guard gen == self.generation else { return }
@@ -174,9 +225,30 @@ final class PhonePlayer: ObservableObject {
             } catch {
                 guard let self = self, gen == self.generation else { return }
                 let message = error.localizedDescription
+                if self.together { self.togetherFailed(message); return }
                 self.stop(saving: false, quiet: true, notify: true)
                 self.say(message)
             }
+        }
+    }
+
+    /// Playing together, getting the audio ready went wrong: tried again in a little while (the others wait for
+    /// this phone - the screen stays, and Leave still works). After a minute it streams from the PC instead.
+    private func togetherFailed(_ message: String) {
+        guard together, let item = togetherItem else { return }
+        togetherFails += 1
+        let n = togetherFails
+        if n == 1 { say(message + " Trying again.") }
+        let at = togetherAt
+        let gen = generation
+        tearDown()
+        preparing = true
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(min(30, 5 * n)) * 1_000_000_000)
+            guard let self = self, gen == self.generation, self.together, self.active else { return }
+            self.retryTask = nil
+            self.start(item, resume: false, together: at, retry: true)
         }
     }
 
@@ -213,6 +285,11 @@ final class PhonePlayer: ObservableObject {
         guard gen == generation, let p = player else { return }
         if status == .failed {
             if retries < 60 && localFile == nil { lostConnection(gen: gen); return }
+            if together {
+                if let f = localFile { try? FileManager.default.removeItem(at: f) }    // fetched again
+                togetherFailed("This phone couldn't play the audio.")
+                return
+            }
             stop(saving: false, quiet: true, notify: true)
             say("This phone couldn't play the audio.")
             return
@@ -226,6 +303,7 @@ final class PhonePlayer: ObservableObject {
                 if self.reconnecting { self.say("Back again.") }
                 self.reconnecting = false
                 self.retries = 0
+                self.togetherFails = 0
                 self.position = start
                 if play { self.player?.play() }
                 self.updateNowPlaying()
@@ -238,22 +316,33 @@ final class PhonePlayer: ObservableObject {
     }
 
     private func controlChanged(_ status: AVPlayer.TimeControlStatus) {
+        let was = paused
         paused = status == .paused
+        if status == .playing { lastPlaying = Date() }
+        // paused (by anything: a button, a call, the headphones): her place is kept straight away
+        // (not at the very end - that's kept as finished)
+        if paused && !was && didStart && player != nil && Date().timeIntervalSince(lastSave) > 1
+            && !(duration > 0 && currentTime() > duration - 3) {
+            save(finished: false)
+        }
         updateNowPlaying()
     }
 
     private func tick(_ seconds: Double) {
         guard seconds.isFinite, didStart else { return }
         position = seconds
-        if player?.timeControlStatus == .playing && Date().timeIntervalSince(lastSave) > 30 { save(finished: false) }
+        if player?.timeControlStatus == .playing {
+            lastPlaying = Date()
+            if Date().timeIntervalSince(lastSave) > 30 { save(finished: false) }
+        }
     }
 
     // MARK: staying up when the connection drops
 
     /// Builds the player again at the same place, from the phone's own copy if there is one, else from the PC.
-    private func reload(play: Bool) {
+    private func reload(play: Bool, at given: Double? = nil) {
         guard active, let api = api() else { return }
-        let at = didStart ? currentTime() : pendingStart
+        let at = given ?? (didStart ? currentTime() : pendingStart)
         let url: URL?
         if let f = localFile { url = f } else if let path = mediaPath { url = api.media(path) } else { url = nil }
         guard let url = url else { return }
@@ -294,16 +383,29 @@ final class PhonePlayer: ObservableObject {
         reload(play: (player?.rate ?? 0) != 0)
     }
 
+    /// iPhone's sound system restarted (it happens, rarely): the player is made again at the same place.
+    func mediaReset() {
+        guard active else { return }
+        configureAudioSession()
+        guard player != nil else { return }                 // still getting ready: it starts with the new one
+        let play = !paused && !together
+        reload(play: play, at: didStart ? position : pendingStart)
+    }
+
     /// Downloads the whole track in the background, then plays from the phone's copy.
     private func fetchWhole(gen: Int) {
         wholeTask?.cancel()
-        guard let id = jobID else { return }
+        guard let firstID = jobID, let item = itemID else { return }
+        let soundtrack = anyAudio
         wholeTask = Task { [weak self] in
+            var id = firstID
             var tries = 0
+            var askedAgain = false
             while tries < 900 {
                 tries += 1
                 guard let self = self, self.active, self.jobID == id, let api = self.api() else { return }
-                if let job = try? await api.get("api/play/listen/job/\(id)", as: ListenJob.self) {
+                do {
+                    let job = try await api.get("api/play/listen/job/\(id)", as: ListenJob.self)
                     if job.state == "failed" { return }
                     if let full = job.fullURL, let url = api.media(full),
                        let file = await Downloads.get(url, name: "\(id).m4a") {
@@ -311,6 +413,22 @@ final class PhonePlayer: ObservableObject {
                         self.useLocal(file)
                         return
                     }
+                } catch is CancellationError {
+                    return
+                } catch APIError.server(let message) {
+                    // the PC doesn't know this one any more (it was restarted): asked for once more, else left
+                    guard !askedAgain, message.contains("isn't being prepared") else { return }
+                    askedAgain = true
+                    guard let job = try? await api.post("api/play/listen/prepare", ["item": item, "fmt": "hls", "any": soundtrack],
+                                                        as: ListenJob.self),
+                          self.active, self.jobID == id else { return }
+                    id = job.id
+                    self.jobID = id
+                    continue
+                } catch APIError.signIn(_) {
+                    return
+                } catch {
+                    // no connection: tried again in a while
                 }
                 try? await Task.sleep(nanoseconds: tries < 30 ? 4_000_000_000 : 15_000_000_000)
                 if Task.isCancelled { return }
@@ -347,6 +465,7 @@ final class PhonePlayer: ObservableObject {
     func play() {
         guard let p = player, didStart else { return }
         if reconnecting { networkBack(); return }
+        configureAudioSession()
         p.play()
     }
 
@@ -413,6 +532,8 @@ final class PhonePlayer: ObservableObject {
         reconnecting = false
         retries = 0
         together = false
+        togetherItem = nil
+        roomSpeed = nil
         if wasActive { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
         if wasActive && !quiet { say("Stopped.") }
         if wasActive && notify { onEnded() }
@@ -441,6 +562,9 @@ final class PhonePlayer: ObservableObject {
         preparing = true
         progress = 0
         title = "the next episode"
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: "Next episode",
+                                                           MPMediaItemPropertyArtist: "Getting it ready",
+                                                           MPNowPlayingInfoPropertyPlaybackRate: 0.0]
         Task {
             let r = try? await api.get("api/play/listen/next", ["item": id], as: NextResponse.self)
             guard gen == self.generation else { return }
@@ -463,6 +587,10 @@ final class PhonePlayer: ObservableObject {
         if finished { form["finished"] = "1" }
         Offline.shared.notePos(id, finished ? 0 : t)
         Places.send(api, "api/play/listen/save", form)
+        if finished { LastPlay.clear(id) } else {
+            LastPlay.note(LastPlay(kind: "audio", item: id, title: title, type: hasNext ? "Episode" : "Movie", hasAD: hasAD,
+                                   pos: t, duration: duration))
+        }
     }
 
     private func tearDown() {
@@ -483,9 +611,7 @@ final class PhonePlayer: ObservableObject {
     }
 
     private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [])
-        try? session.setActive(true)
+        if let problem = Sound.activate() { say(problem) }
     }
 
     private func updateNowPlaying() {
@@ -495,9 +621,11 @@ final class PhonePlayer: ObservableObject {
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime()
         info[MPNowPlayingInfoPropertyPlaybackRate] = Double(p.rate)
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = together ? (roomSpeed ?? 1) : 1.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
-        MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = false
+        // next and previous (headphones, the car) are 30 seconds forward and back
+        MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = true
+        MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = true
     }
 }
 
@@ -601,14 +729,26 @@ enum Places {
     static func send(_ api: API, _ path: String, _ form0: [String: String]) {
         var form = form0
         form["at"] = String(format: "%.1f", Date().timeIntervalSince1970)
+        let item = form["item"] ?? ""
+        // kept on the phone straight away (the app may be closed before the PC answers); let go once the PC has it
+        var p = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+        var kept = form
+        kept["_path"] = path
+        p[item] = kept
+        UserDefaults.standard.set(p, forKey: key)
         Task {
-            let ok = (try? await api.post(path, form, as: MessageResponse.self)) != nil
-            var p = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
-            let item = form["item"] ?? ""
-            if ok { if p[item]?["at"] == form["at"] { p[item] = nil } }
-            else { var f = form; f["_path"] = path; p[item] = f }
-            UserDefaults.standard.set(p, forKey: key)
+            guard (try? await api.post(path, form, as: MessageResponse.self)) != nil else { return }
+            var now = UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]] ?? [:]
+            if now[item]?["at"] == form["at"] { now[item] = nil }
+            UserDefaults.standard.set(now, forKey: key)
         }
+    }
+
+    /// Her place kept on the phone that the PC hasn't had yet (0 when it was finished).
+    static func pendingPos(_ item: String) -> Double? {
+        guard let f = (UserDefaults.standard.dictionary(forKey: key) as? [String: [String: String]])?[item] else { return nil }
+        if f["finished"] == "1" { return 0 }
+        return f["pos"].flatMap { Double($0) }
     }
 
     /// A place for this item is still waiting to reach the PC (so the phone's own place is the newest).
