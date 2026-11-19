@@ -42,6 +42,8 @@ final class AppModel: ObservableObject {
     private let monitor = NWPathMonitor()
     private var onWiFi = false
     private var addressTask: Task<Void, Never>?
+    /// Each address check has a number: only the newest may set the address.
+    private var addressGen = 0
     private var forward: AnyCancellable?
 
     private var restoring = false
@@ -96,24 +98,46 @@ final class AppModel: ObservableObject {
         guard up else { return }
         addressTask?.cancel()
         addressTask = Task {
-            await self.chooseAddress(); self.phone.networkBack(); self.book.networkBack()
+            await self.chooseAddress()
+            if Task.isCancelled { return }
+            self.phone.networkBack(); self.book.networkBack()
             if let api = self.api { await Places.flush(api) }
+            self.flushSignOuts()
             Offline.shared.resume()
         }
     }
 
-    /// Picks the address: on Wi-Fi, this PC's home address if it answers (and it's the same PC).
+    /// Does this home address prove it's this PC? Asked without the sign-in: with the key from signing in, it must
+    /// answer a random question; signed in before there were keys, it must give this PC's id.
+    private func provesHome(_ u: URL) async -> Bool {
+        if LanProof.has {
+            let nonce = LanProof.nonce()
+            guard let m = await API(base: u).quickMe(["nonce": nonce, "kid": LanProof.id]) else { return false }
+            return LanProof.matches(m.lanProof, nonce: nonce)
+        }
+        let id = UserDefaults.standard.string(forKey: "serverID") ?? ""
+        guard !id.isEmpty, let m = await API(base: u).quickMe() else { return false }
+        return m.serverID == id
+    }
+
+    /// Picks the address: on Wi-Fi, this PC's home address if it answers and proves it's this PC.
     func chooseAddress() async {
+        addressGen += 1
+        let gen = addressGen
         guard let away = typedURL else { return }
         var pick = away.absoluteString
         let id = UserDefaults.standard.string(forKey: "serverID") ?? ""
         let homes = UserDefaults.standard.stringArray(forKey: "homeURLs") ?? []
-        if onWiFi && !id.isEmpty {
-            for h in homes where h != pick {
+        if onWiFi && (LanProof.has || !id.isEmpty) {
+            for h in homes {
+                if h == pick { break }
                 guard let u = URL(string: h) else { continue }
-                if let m = await API(base: u).quickMe(), m.serverID == id { pick = h; break }
+                let ok = await provesHome(u)
+                if Task.isCancelled || gen != addressGen { return }      // a newer check is under way
+                if ok { pick = h; break }
             }
         }
+        guard !Task.isCancelled, gen == addressGen else { return }
         let old = api?.base.absoluteString ?? ""
         activeAddress = pick
         if !old.isEmpty && old != pick {
@@ -133,10 +157,19 @@ final class AppModel: ObservableObject {
             if let id = m.serverID, !id.isEmpty { UserDefaults.standard.set(id, forKey: "serverID") }
             if let h = m.homeURLs { UserDefaults.standard.set(h, forKey: "homeURLs") }
             needSignIn = !(m.signedIn ?? false) || API.token.isEmpty
+            if !needSignIn && !LanProof.has { await fetchLanKey() }
         } catch APIError.signIn(_) {
             needSignIn = true
         } catch {
             // the PC didn't answer: keep going as before
+        }
+    }
+
+    /// Signed in before the PC gave keys: get it, over the address typed in (never a home address).
+    private func fetchLanKey() async {
+        guard let away = typedURL, !API.token.isEmpty else { return }
+        if let m = try? await API(base: away).get("api/play/me", ["lan_key": "1"], as: Me.self) {
+            LanProof.remember(id: m.lanProofID, key: m.lanProofKey)
         }
     }
 
@@ -148,6 +181,9 @@ final class AppModel: ObservableObject {
             guard let token = r.token, !token.isEmpty else { return "The PC's app needs updating for signing in." }
             API.token = token
             Keychain.set("token", token)
+            LanProof.forget()
+            // (signed in on a home address: the key is fetched over the address typed in)
+            if !atHome { LanProof.remember(id: r.lanProofID, key: r.lanProofKey) }
             await checkSignIn()
             await chooseAddress()
             needSignIn = false
@@ -163,11 +199,38 @@ final class AppModel: ObservableObject {
         together.leave(quiet: true)
         phone.stop(saving: true, quiet: true, notify: false)
         book.stop(saving: true, quiet: true, notify: false)
-        if let api = api { Task { _ = try? await api.post("api/play/logout", [:], as: MessageResponse.self) } }
+        let old = API.token
         API.token = ""
         Keychain.set("token", nil)
+        LanProof.forget()
         me = nil
         needSignIn = true
+        if !old.isEmpty { sendSignOut(old) }
+    }
+
+    /// Tells the PC this phone signed out. With no connection, it's kept and told later.
+    private func sendSignOut(_ token: String) {
+        AppModel.keepSignOut(token, true)
+        guard let api = api else { return }
+        Task {
+            if (try? await api.post("api/play/logout", [:], token: token, as: MessageResponse.self)) != nil {
+                AppModel.keepSignOut(token, false)
+            }
+        }
+    }
+
+    /// The sign-outs the PC hasn't been told about yet (kept safe, like the sign-in).
+    private static func keepSignOut(_ token: String, _ keep: Bool) {
+        var left = (Keychain.get("signouts") ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        left.removeAll { $0 == token }
+        if keep { left.append(token) }
+        Keychain.set("signouts", left.suffix(5).joined(separator: ","))
+    }
+
+    func flushSignOuts() {
+        for t in (Keychain.get("signouts") ?? "").split(separator: ",").map(String.init) where !t.isEmpty && t != API.token {
+            sendSignOut(t)
+        }
     }
 
     /// Something is playing on this phone (a show's audio or a book).
@@ -231,17 +294,18 @@ final class AppModel: ObservableObject {
         }
         // On the home Wi-Fi the web address often can't be reached from inside (many routers don't loop back):
         // keep the web address for away from home, and use the PC's home address it gave before.
+        // It's only used (and sent the sign-in) once it proves it's this PC, as above.
         var home = ""
         if found == nil, onWiFi, let typed = tries.first {
-            let id = UserDefaults.standard.string(forKey: "serverID") ?? ""
             for h in UserDefaults.standard.stringArray(forKey: "homeURLs") ?? [] {
-                guard let u = URL(string: h), let m = await API(base: u).quickMe() else { continue }
-                if id.isEmpty || m.serverID == id { found = typed; home = h; break }
+                guard let u = URL(string: h) else { continue }
+                if await provesHome(u) { found = typed; home = h; break }
             }
         }
         guard let url = found else { return problem.isEmpty ? APIError.network.localizedDescription : problem }
         server = url.absoluteString
         UserDefaults.standard.set(server, forKey: "server")
+        addressGen += 1                                       // an older address check doesn't change it now
         activeAddress = home
         lastRefresh = .distantPast
         await checkSignIn()
@@ -253,6 +317,7 @@ final class AppModel: ObservableObject {
     func refreshAll() async {
         lastRefresh = Date()
         if let api = api { await Places.flush(api) }          // places kept while the PC couldn't be reached
+        flushSignOuts()
         await refreshDevices(announce: false)
         await loadContinue()
         await loadContinueBooks()

@@ -29,6 +29,7 @@ struct RootView: View {
 
 struct SetupView: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var offline = Offline.shared
     @Environment(\.dismiss) private var dismiss
     let first: Bool
     @State private var text = ""
@@ -68,6 +69,13 @@ struct SetupView: View {
                         }
                     } footer: {
                         Text("Auto asks iPhone how late the headphones are (AirPods are about 0.2 seconds), so both of you hear it at the same moment.")
+                    }
+                    Section {
+                        Toggle("Download on Wi-Fi only", isOn: $offline.wifiOnly)
+                    } header: {
+                        Text("Downloads")
+                    } footer: {
+                        Text(offline.wifiWait ? "Downloads are waiting for Wi-Fi." : "When off, downloads use mobile data too.")
                     }
                     Section {
                         Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through the address above.")
@@ -707,7 +715,7 @@ struct DownloadButton: View {
             case "done": return "Downloaded"
             case "failed": return "Download again"
             case "preparing": return "Getting ready" + (s.progress > 0 ? " \(s.progress)%" : "")
-            default: return "Downloading" + (s.progress > 0 ? " \(s.progress)%" : "")
+            default: return (offline.wifiWait ? "Waiting for Wi-Fi" : "Downloading") + (s.progress > 0 ? " \(s.progress)%" : "")
             }
         }()
         Button(text) {

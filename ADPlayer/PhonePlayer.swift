@@ -514,6 +514,7 @@ enum Downloads {
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 60
         c.timeoutIntervalForResource = 3600
+        API.noCookies(c)
         return URLSession(configuration: c)
     }()
 

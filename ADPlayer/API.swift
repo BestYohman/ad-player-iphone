@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Security
 
 // Talks to the AD Player that runs inside describealign_ultimate.py on the PC (port 5021).
 // It uses the same addresses the /play web page uses, so nothing new is needed on the PC.
@@ -29,27 +31,65 @@ struct API {
     /// Called when the PC says to sign in (again).
     static var signInNeeded: (@MainActor () -> Void)?
 
+    /// No cookies at all: the PC's sign-in cookie (for the web page) is never kept or sent by the app.
+    static func noCookies(_ c: URLSessionConfiguration) {
+        c.httpShouldSetCookies = false
+        c.httpCookieAcceptPolicy = .never
+        c.httpCookieStorage = nil
+    }
+
+    /// For trying home addresses: no sign-in, no cookies, and no following a redirect somewhere else.
     private static let quick: URLSession = {
-        let c = URLSessionConfiguration.default
+        let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 2.5
         c.timeoutIntervalForResource = 3
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: c)
+        noCookies(c)
+        return URLSession(configuration: c, delegate: NoRedirect(), delegateQueue: nil)
     }()
 
-    /// Asks quickly whether the PC is at this address (used to find it on the home Wi-Fi). Nil if it didn't answer.
-    func quickMe() async -> Me? {
-        guard let result = try? await API.quick.data(from: url("api/play/me")),
+    /// Asks quickly whether the PC is at this address, without the sign-in (used to find it on the home Wi-Fi).
+    /// Nil if it didn't answer.
+    func quickMe(_ query: [String: String?] = [:]) async -> Me? {
+        var r = URLRequest(url: url("api/play/me", query))
+        r.httpShouldHandleCookies = false
+        guard let result = try? await API.quick.data(for: r),
               (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? JSONDecoder().decode(Me.self, from: result.0)
     }
 
-    /// "192.168.1.20" or "192.168.1.20:5021" or "http://mypc:5021/play" -> http://192.168.1.20:5021
+    /// An address on the home network (or this phone): 10.x, 172.16-31.x, 192.168.x, 127.x, localhost, a .local
+    /// name, or a name without a dot. Only these get plain http when typed without http:// or https://.
+    static func lan(_ host: String) -> Bool {
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if h.isEmpty || h == "localhost" || h.hasSuffix(".local") { return true }
+        let n = h.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        if n.count == 4, n.allSatisfy({ $0 != nil && (0...255).contains($0!) }) {
+            let x = n[0]!, y = n[1]!
+            return x == 10 || x == 127 || (x == 172 && (16...31).contains(y)) || (x == 192 && y == 168)
+        }
+        return !h.contains(".") && !h.contains(":")
+    }
+
+    /// The host of typed text, before anything is added to it.
+    private static func typedHost(_ s: String) -> String {
+        var h = s
+        if let r = h.range(of: "://") { h = String(h[r.upperBound...]) }
+        h = String(h.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        h = String(h.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
+        if let at = h.lastIndex(of: "@") { h = String(h[h.index(after: at)...]) }
+        if h.hasPrefix("["), let end = h.firstIndex(of: "]") { return String(h[h.index(after: h.startIndex)..<end]) }
+        if let colon = h.lastIndex(of: ":") { h = String(h[..<colon]) }
+        return h
+    }
+
+    /// "192.168.1.20" or "192.168.1.20:5021" or "http://mypc:5021/play" -> http://192.168.1.20:5021;
+    /// "player.example.com" -> https://player.example.com (plain http only for an address at home)
     static func normalise(_ text: String) -> URL? {
         var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
         let lower = s.lowercased()
-        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") { s = "http://" + s }
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") { s = (lan(typedHost(s)) ? "http://" : "https://") + s }
         guard var parts = URLComponents(string: s), let host = parts.host, !host.isEmpty else { return nil }
         // the PC at home (an IP address or a name without dots) is on port 5021; a web address is used as typed
         // (its own port, or the normal one - https or a forwarded port 80)
@@ -61,11 +101,12 @@ struct API {
         return parts.url
     }
 
-    /// The addresses to try for what was typed: as it is, then (a web address with no port) on port 5021 too.
+    /// The addresses to try for what was typed: as it is, then (an address at home with no port) on port 5021 too.
     static func candidates(_ text: String) -> [URL] {
         guard let u = normalise(text) else { return [] }
         var out = [u]
-        if var parts = URLComponents(url: u, resolvingAgainstBaseURL: false), parts.port == nil, parts.scheme == "http" {
+        if var parts = URLComponents(url: u, resolvingAgainstBaseURL: false), parts.port == nil, parts.scheme == "http",
+           lan(parts.host ?? "") {
             parts.port = 5021
             if let alt = parts.url { out.append(alt) }
         }
@@ -77,7 +118,8 @@ struct API {
         c.timeoutIntervalForRequest = 25
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         c.waitsForConnectivity = false
-        return URLSession(configuration: c)
+        noCookies(c)
+        return URLSession(configuration: c, delegate: SameHostRedirect(), delegateQueue: nil)
     }()
 
     func url(_ path: String, _ query: [String: String?] = [:]) -> URL {
@@ -108,6 +150,8 @@ struct API {
             return .networkWhy("the iPhone couldn't find that address. Check its spelling in Settings.")
         case .timedOut:
             return .networkWhy("it took too long to answer. On the home Wi-Fi, use the PC's own address (like 192.168.2.10).")
+        case .appTransportSecurityRequiresSecureConnection:
+            return .networkWhy("this address needs https. Type it with https:// in Settings.")
         case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed:
             return .networkWhy("the secure (https) connection failed.")
         default:
@@ -117,14 +161,18 @@ struct API {
 
     func get<T: Decodable>(_ path: String, _ query: [String: String?] = [:], as type: T.Type) async throws -> T {
         var request = URLRequest(url: url(path, query))
+        request.httpShouldHandleCookies = false
         if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
         return try await send(request, as: type)
     }
 
-    func post<T: Decodable>(_ path: String, _ form: [String: String], as type: T.Type) async throws -> T {
+    /// token: another sign-in to send instead of this phone's own (a sign-out kept for later).
+    func post<T: Decodable>(_ path: String, _ form: [String: String], token: String? = nil, as type: T.Type) async throws -> T {
         var request = URLRequest(url: url(path))
         request.httpMethod = "POST"
-        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
+        let t = token ?? API.token
+        if !t.isEmpty { request.setValue(t, forHTTPHeaderField: "X-ADP-Token") }
+        request.httpShouldHandleCookies = false
         request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
         var body = URLComponents()
         body.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -178,6 +226,11 @@ struct Me: Decodable {
     let loginNeeded: Bool?
     let serverID: String?
     let homeURLs: [String]?
+    /// The answer to the home-address check (asked with ?nonce=...&kid=...).
+    var lanProof: String? = nil
+    /// The key for that check (asked with ?lan_key=1 and the sign-in, over the address typed in).
+    var lanProofID: String? = nil
+    var lanProofKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, role, away
@@ -185,12 +238,103 @@ struct Me: Decodable {
         case loginNeeded = "login_needed"
         case serverID = "server_id"
         case homeURLs = "home_urls"
+        case lanProof = "lan_proof"
+        case lanProofID = "lan_proof_id"
+        case lanProofKey = "lan_proof_key"
     }
 }
 
 struct LoginResponse: Decodable {
     let message: String
     let token: String?
+    var lanProofID: String? = nil
+    var lanProofKey: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case message, token
+        case lanProofID = "lan_proof_id"
+        case lanProofKey = "lan_proof_key"
+    }
+}
+
+/// Never follows a redirect (the home-address check: on someone else's Wi-Fi that address can be anyone).
+final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+/// Follows a redirect, but the sign-in only goes along to the same address (and never from https to http).
+final class SameHostRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        var r = request
+        let from = task.originalRequest?.url
+        let same = from?.host?.lowercased() == request.url?.host?.lowercased() && from?.port == request.url?.port
+        let downgrade = from?.scheme == "https" && request.url?.scheme != "https"
+        if !same || downgrade { r.setValue(nil, forHTTPHeaderField: "X-ADP-Token") }
+        r.httpShouldHandleCookies = false
+        completionHandler(r)
+    }
+}
+
+/// The home-address check (as the Android app does it): at sign-in the PC gives this phone a key, over the address
+/// typed in. On the home Wi-Fi, a home address is only used (and sent the sign-in) once it answers a random
+/// question (nonce) with that key: HMAC-SHA256, in hex. Only this PC and this phone know the key.
+enum LanProof {
+    private static var cachedID: String?
+    private static var cachedKey: String?
+
+    static var id: String {
+        if cachedID == nil { cachedID = Keychain.get("lan_id") ?? "" }
+        return cachedID ?? ""
+    }
+    static var key: String {
+        if cachedKey == nil { cachedKey = Keychain.get("lan_key") ?? "" }
+        return cachedKey ?? ""
+    }
+    static var has: Bool { !id.isEmpty && !key.isEmpty }
+
+    static func remember(id newID: String?, key newKey: String?) {
+        guard let i = newID, let k = newKey, !i.isEmpty, !k.isEmpty else { return }
+        Keychain.set("lan_id", i)
+        Keychain.set("lan_key", k)
+        cachedID = i
+        cachedKey = k
+    }
+
+    static func forget() {
+        Keychain.set("lan_id", nil)
+        Keychain.set("lan_key", nil)
+        cachedID = ""
+        cachedKey = ""
+    }
+
+    /// 16 random bytes, in hex.
+    static func nonce() -> String {
+        var b = [UInt8](repeating: 0, count: 16)
+        if SecRandomCopyBytes(kSecRandomDefault, b.count, &b) != errSecSuccess {
+            var g = SystemRandomNumberGenerator()
+            for i in b.indices { b[i] = UInt8.random(in: 0...255, using: &g) }
+        }
+        return b.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func expected(_ nonce: String) -> String {
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(nonce.utf8), using: SymmetricKey(data: Data(key.utf8)))
+        return mac.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Whether the answer is right (compared in constant time).
+    static func matches(_ proof: String?, nonce: String) -> Bool {
+        guard has, let p = proof?.lowercased() else { return false }
+        let a = Array(p.utf8), b = Array(expected(nonce).utf8)
+        guard a.count == b.count, !a.isEmpty else { return false }
+        var diff: UInt8 = 0
+        for i in a.indices { diff |= a[i] ^ b[i] }
+        return diff == 0
+    }
 }
 
 /// Playing together: what the PC says about the shared clock.

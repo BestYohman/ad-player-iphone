@@ -26,7 +26,6 @@ targets:
         UIRequiresFullScreen: true
         NSLocalNetworkUsageDescription: AD Player connects to your media PC at home to play shows and movies with audio description, and audiobooks.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true
     settings:
       base:

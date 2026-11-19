@@ -6,7 +6,7 @@ import UIKit
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
-        Fetcher.backgroundDone = completionHandler
+        Fetcher.backgroundDone[identifier] = completionHandler
         _ = Offline.shared
     }
 }
