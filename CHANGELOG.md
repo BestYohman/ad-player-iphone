@@ -3,6 +3,28 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.9.0 - 2026-11-19
+- VoiceOver: each episode, movie, book and download is one stop. Play together, Start over, Download, Favorites, Ask for audio description and Remove are actions - swipe up or down. The buttons are still on the screen.
+- Magic Tap (two-finger double tap) plays and pauses, on the phone, together or on the TV.
+- The escape gesture (two-finger scrub) closes Now playing, Settings, Sort and filter, and Chapters.
+- Now playing: swipe up or down on the place to go forward or back 30 seconds; it reads "12 minutes of 45 minutes".
+- Each part of Home and the lists is a heading, for the rotor.
+- Messages wait for VoiceOver to finish speaking instead of cutting it off.
+- Sign out and Remove a download ask first.
+- When the PC can't be reached, Shows / Movies in progress says so instead of "Nothing in progress".
+- TV Play / Pause changes straight away, so a second press doesn't send the same again.
+- Lists load once, with the saved sort, and aren't loaded again when going back (unless they're 5 minutes old, or pulled down).
+- Large text: the buttons under a row go one under another when they don't fit.
+- Siri and Shortcuts: "Play in AD Player" (Siri asks what - a show plays its next episode), "Resume AD Player", "Where am I in AD Player".
+- Headphone buttons, the car and the lock screen: next and previous are forward and back 30 seconds. Play with nothing loaded carries on with the last thing played.
+- Headphones out or Bluetooth lost: it pauses (for everyone when together). Calls and Siri: it pauses and keeps the place, and carries on afterwards only if it was playing.
+- Her place is kept whenever it pauses and when the app closes, and sent to the PC when there's a connection.
+- Play together: Stop for everyone asks first; nothing plays until the PC says where; it joins again by itself after a drop ("Back with the others"); swiping the app away while paused leaves the room.
+- "No audio description - playing the soundtrack" when an item has none.
+- Safer connections: at home the PC's own address is only used once it proves it's this PC; https everywhere else; no cookies; the sign-in kept on this phone only.
+- Downloads carry on after a stop, check there's room on the phone, and can be set to Wi-Fi only (Settings).
+- Sign-outs are sent to the PC later when there's no connection.
+
 ## 1.8.0 - 2026-11-06
 - Downloads: a Download button beside each episode, movie and audiobook keeps it on the phone, to play with no connection. For episodes and movies it keeps the audio description (or the soundtrack when there is none).
 - Downloads carry on in the background, even with the app closed, and pick up again when the app opens.

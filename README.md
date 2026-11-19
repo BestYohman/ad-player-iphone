@@ -15,8 +15,8 @@ A small iPhone app for the AD Player in `describealign_ultimate.py`. It can:
 - Version 1.2:
   - She signs in once with her Emby user name and password (the phone stays signed in).
   - At home it connects straight to the PC; away from home it uses the web address typed in.
-  - Play together: a Join button appears when someone starts something with Play together on; with Play together on
-    here, what she starts also plays on the other phone. The buttons, lock screen and headphones work for both phones.
+  - Play together: a Join button appears when someone starts something to play together (with the Play together
+    button beside Play). The buttons, lock screen and headphones work for both phones.
   - The audio is downloaded to the phone in the background while it plays, and when the connection drops it carries
     on by itself from the same place.
 
@@ -31,7 +31,11 @@ A small iPhone app for the AD Player in `describealign_ultimate.py`. It can:
 
 It talks to the PC on port 5021, the same as the AD Player web page.
 
-The app is built on GitHub's Macs, so no Mac is needed. It is installed with AltStore using a free Apple ID, and AltStore re-signs it every 7 days.
+- Version 1.9: made for VoiceOver - each row is one stop with its buttons as actions (swipe up or down), Magic Tap
+  (two-finger double tap) plays and pauses, the escape gesture closes Now playing, and Siri can play, resume and say
+  where she is ("Play in AD Player", "Resume AD Player", "Where am I in AD Player").
+
+The app is built on GitHub's Macs, so no Mac is needed. It is installed with Sideloadly on the PC using a free Apple ID, and has to be signed again every 7 days (Sideloadly can do that by itself).
 
 ---
 
@@ -43,7 +47,7 @@ The app is built on GitHub's Macs, so no Mac is needed. It is installed with Alt
    - Choose **Public**, so the iPhone can download the app without signing in. Nothing private is in these files; the PC's address is typed into the app, not stored here.
    - Leave everything else as it is, and press **Create repository**.
 3. On the empty repository page, click **uploading an existing file**.
-4. Open this folder in File Explorer. Select everything in it: the `ADPlayer` folder, the `.github` folder, `project.yml` and `README.md`. Drag them onto the page, then press **Commit changes**.
+4. Open this folder in File Explorer. Select everything in it: the `ADPlayer` folder, the `.github` folder, `project.yml`, `README.md` and `CHANGELOG.md`. Drag them onto the page, then press **Commit changes**.
    - If the `.github` folder doesn't upload, follow the steps under "If the .github folder didn't upload" at the end of this guide.
 5. Open the **Actions** tab. If GitHub asks, press the button to enable workflows.
    - "Build the iPhone app" runs by itself every time files change, and takes about 5 minutes.
@@ -51,36 +55,35 @@ The app is built on GitHub's Macs, so no Mac is needed. It is installed with Alt
    - A **red cross** means it didn't. Click the run, and the page shows a **Build errors** box. Copy everything in it and send it to Claude.
 6. When it's green, go to the **Code** tab. Under **Releases** on the right, open **AD Player (latest)**. `ADPlayer.ipa` is the app.
 
-## 2. AltServer on the media PC (once)
+## 2. Sideloadly on the PC (once)
 
-AltServer runs on the PC that is always on, which is the one running describealign. It keeps the app signed.
+Sideloadly runs on the Windows PC. It signs the app with an Apple ID and puts it on the iPhone.
 
-1. Install **iTunes** and **iCloud** from Apple's website. The Microsoft Store versions don't work with AltServer; https://altstore.io links to the right ones.
-2. Install **AltServer for Windows** from https://altstore.io, and start it. It sits in the system tray by the clock.
-3. To make it start with Windows, press Windows key + R, type `shell:startup`, and put a shortcut to AltServer in that folder.
-4. Connect the iPhone to the PC with a cable. Unlock it, and tap **Trust**.
-5. In iTunes, select the iPhone. Under **Summary**, tick **Sync with this iPhone over Wi-Fi**, then press **Apply**. This lets AltStore refresh the app over Wi-Fi later.
-6. Click the AltServer tray icon, choose **Install AltStore**, pick the iPhone, and sign in with an Apple ID. Yours is fine; it doesn't have to be hers.
-7. On the iPhone:
-   - Go to **Settings > General > VPN & Device Management**. Tap your Apple ID, then **Trust**.
-   - Go to **Settings > Privacy & Security > Developer Mode**. Turn it **On**, and let the phone restart.
+1. Install **iTunes** and **iCloud** from Apple's website (not the Microsoft Store versions - Sideloadly's page links to the right ones).
+2. Install **Sideloadly** from https://sideloadly.io.
+3. Connect the iPhone to the PC with a cable. Unlock it, and tap **Trust**.
+4. In iTunes, select the iPhone. Under **Summary**, tick **Sync with this iPhone over Wi-Fi**, then press **Apply**. This lets Sideloadly reach the iPhone over Wi-Fi later.
 
 ## 3. Install AD Player on the iPhone
 
-1. On the iPhone, open Safari and go to the **AD Player (latest)** release page from step 1.6. Tap **ADPlayer.ipa**, then **Download**. It goes to Files, in the Downloads folder.
-2. Open **AltStore**. Go to **My Apps**, press **+** (top left), and choose **ADPlayer.ipa**.
-3. Open **AD Player**.
+1. On the PC, open the **AD Player (latest)** release page from step 1.6 and download **ADPlayer.ipa**.
+2. Open **Sideloadly**. Drag `ADPlayer.ipa` onto it, pick the iPhone, type the Apple ID (yours is fine; it doesn't have to be hers), and press **Start**. Type the Apple ID's password when asked.
+3. On the iPhone, the first time:
+   - Go to **Settings > General > VPN & Device Management**. Tap the Apple ID, then **Trust**.
+   - Go to **Settings > Privacy & Security > Developer Mode**. Turn it **On**, and let the phone restart.
+4. Open **AD Player**.
    - Type the PC's address, the same one the AD Player web page uses, for example `192.168.1.20:5021`.
    - Press **Connect**.
    - When iPhone asks to find devices on the local network, choose **Allow**.
 
 ## Keeping it working
 
-- **The 7-day refresh is automatic** while three things are true: the iPhone and the PC are on the home Wi-Fi, AltServer is running, and iTunes Wi-Fi sync is on. AltStore's **My Apps** shows how many days are left, and **Refresh All** does it right away.
-- **If the app ever won't open,** it has expired. Open AltStore and press **Refresh All** while she's at home. Her settings and place are kept.
-- **Updates:** upload the changed files to GitHub the same way (they replace the old ones), and wait for the green tick. Then install the new `ADPlayer.ipa` with AltStore's **+**. Settings are kept.
-  - For the audiobooks update (version 1.1): upload the whole `ADPlayer` folder (it has a new file, `BookPlayer.swift`), `project.yml` and `README.md`.
-- **Free Apple ID limit:** 3 sideloaded apps per phone, and AltStore counts as one.
+- **Every 7 days the app has to be signed again** (a free Apple ID allows 7 days). In Sideloadly, turn on automatic refresh for the app (in its advanced options, or by right-clicking the app in Sideloadly's list); then, while the PC is on with Sideloadly running and the iPhone is on the home Wi-Fi, it re-signs by itself.
+- **If the app ever won't open,** it has expired. Connect the iPhone to the PC (or have it on the home Wi-Fi) and install `ADPlayer.ipa` again with Sideloadly. Her settings and place are kept.
+- **Updates:** upload the changed files to GitHub the same way (they replace the old ones; include `CHANGELOG.md`), and wait for the green tick. Then download the new `ADPlayer.ipa` and install it with Sideloadly the same way. Settings are kept.
+  - Each new version needs a new version number in `project.yml` (and a part for it at the top of `CHANGELOG.md`): the build stops if that version was already published from different files.
+- **Free Apple ID limit:** 3 sideloaded apps per phone.
+- **Siri:** say "Play in AD Player" (Siri asks what to play), "Resume AD Player" or "Where am I in AD Player". They are also in the Shortcuts app.
 
 ## If the .github folder didn't upload
 

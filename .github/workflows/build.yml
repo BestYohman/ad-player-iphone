@@ -80,6 +80,7 @@ jobs:
         run: |
           # the build number goes up with every build (so iPhone always sees a newer one)
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" build/Release-iphoneos/ADPlayer.app/Info.plist
+          if [ -d build/Release-iphoneos/ADPlayer.app/Metadata.appintents ]; then echo "Siri shortcuts: included"; else echo "::warning::Siri shortcuts metadata missing"; fi
           mkdir -p out/Payload
           cp -R build/Release-iphoneos/ADPlayer.app out/Payload/
           cd out && zip -qr ../ADPlayer.ipa Payload
