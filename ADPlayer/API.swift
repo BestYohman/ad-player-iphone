@@ -338,7 +338,7 @@ enum LanProof {
 }
 
 /// Playing together: what the PC says about the shared clock.
-struct Room: Decodable {
+struct Room: Decodable, Equatable {
     let id: String?
     let kind: String?
     let item: String?
@@ -450,7 +450,7 @@ struct NextResponse: Decodable {
     let item: Item?
 }
 
-struct TVStatus: Decodable {
+struct TVStatus: Decodable, Equatable {
     let playing: Bool
     let paused: Bool?
     let text: String
@@ -649,7 +649,16 @@ struct BookmarkEntry: Decodable, Identifiable, Hashable {
     let title: String
     let at: String
     let chapter: String?
-    var id: Double { time }
+    /// Its place in the list: two bookmarks can be at the same time, so the id is the time and the place.
+    var index = 0
+    var id: String { "\(time)|\(index)" }
+
+    enum CodingKeys: String, CodingKey { case time, title, at, chapter }
+
+    /// The list with each one's place filled in.
+    static func numbered(_ list: [BookmarkEntry]) -> [BookmarkEntry] {
+        list.enumerated().map { var b = $0.element; b.index = $0.offset; return b }
+    }
 
     /// What VoiceOver reads: the name, where it is, and the chapter when the name doesn't already say it.
     var spoken: String {

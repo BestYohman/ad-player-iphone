@@ -15,7 +15,7 @@ final class Together: ObservableObject {
 
     weak var model: AppModel?
 
-    private(set) var roomID = ""
+    @Published private(set) var roomID = ""
     private var kind = ""
     private var iseq = 0
     private var iseqLoaded = 0
@@ -183,7 +183,7 @@ final class Together: ObservableObject {
         guard r.id != nil else { return }
         // the first answer to "ready": a phone that joined late (or is back) is told there to go to where the others are
         if readyBeat && (r.iseq ?? 0) == iseqLoaded { readyIseq = iseqLoaded }
-        room = r
+        if room != r { room = r }          // (the screens are only redrawn when something changed)
         kind = r.kind ?? kind
         if let ms = r.msgSeq, ms != msgSeq {
             msgSeq = ms
@@ -444,6 +444,19 @@ final class Together: ObservableObject {
         }
     }
 
+    /// The app is being closed (swiped away) while it's paused or waiting together: it leaves the room, so the
+    /// others aren't kept waiting for this phone. Best effort - it waits two seconds at most.
+    func leaveIfIdle() {
+        guard active, !roomPlaying, let api = api else { return }
+        let form = ["cid": cid, "room": roomID, "action": "leave"]
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            _ = try? await api.post("api/play/together/control", form, as: Room.self)
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 2)
+    }
+
     private func end(_ message: String?) {
         finish()
         if let m = message { say(m) }
@@ -527,6 +540,9 @@ final class Together: ObservableObject {
         if ready && kind != "book" { text += phone?.hasAD == false ? " You hear the soundtrack." : " You hear the audio description." }
         return text
     }
+
+    /// Where it is and how long it is, in seconds (VoiceOver's value for the place).
+    var place: (pos: Double, total: Double) { (mediaReady ? mediaTime : (room?.pos ?? 0), room?.runtime ?? 0) }
 
     var paused: Bool { held || !((room?.want ?? false) && !(room?.waiting ?? false)) }
     var hasNextEpisode: Bool { kind != "book" && (room?.hasNext ?? false) }

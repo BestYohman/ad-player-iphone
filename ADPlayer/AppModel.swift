@@ -9,6 +9,9 @@ import AVFoundation
 /// Everything the screens share: the PC's address, the chosen TV (or this phone), what's playing.
 @MainActor
 final class AppModel: ObservableObject {
+    /// The one model: the screens and the Siri shortcuts share it.
+    static let shared = AppModel()
+
     nonisolated static let phoneID = "__local"
     nonisolated static let phoneName = "This phone - just the audio"
 
@@ -28,7 +31,12 @@ final class AppModel: ObservableObject {
     @Published var continueLoading = false
     @Published var message = ""
     @Published var showPlayer = false
-    @Published var tvStatus: TVStatus?
+    /// The TV's state is kept on its own, so only the screens that show it follow it (it's asked every few seconds).
+    let tvState: TVState
+    var tvStatus: TVStatus? {
+        get { tvState.status }
+        set { tvState.set(newValue) }
+    }
     @Published var continueBooks: [BookItem] = []
     @Published var booksSetUp = true          // false: Audiobookshelf isn't set up on the PC, so the audiobook parts are hidden
     @Published var booksNote = ""
@@ -45,7 +53,6 @@ final class AppModel: ObservableObject {
     private var addressTask: Task<Void, Never>?
     /// Each address check has a number: only the newest may set the address.
     private var addressGen = 0
-    private var forward: AnyCancellable?
 
     private var restoring = false
     private var restoredOnce = false
@@ -59,6 +66,7 @@ final class AppModel: ObservableObject {
         phone = PhonePlayer()
         book = BookPlayer()
         together = Together()
+        tvState = TVState()
         phone.api = { [weak self] in self?.api }
         phone.say = { [weak self] text in self?.say(text) }
         phone.onEnded = { [weak self] in
@@ -81,8 +89,6 @@ final class AppModel: ObservableObject {
         Offline.shared.api = { [weak self] in self?.api }
         Offline.shared.say = { [weak self] text in self?.say(text) }
         together.model = self
-        // the screens follow playing together too
-        forward = together.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         API.signInNeeded = { [weak self] in self?.needSignIn = true }
         monitor.pathUpdateHandler = { [weak self] path in
             let wifi = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
@@ -272,7 +278,9 @@ final class AppModel: ObservableObject {
         // a moment's wait, so a screen opening at the same time doesn't cut it off
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000)
-            UIAccessibility.post(notification: .announcement, argument: text)
+            // queued: VoiceOver finishes what it's saying first, and this doesn't cut it off
+            let queued = NSAttributedString(string: text, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+            UIAccessibility.post(notification: .announcement, argument: queued)
         }
     }
 
@@ -475,7 +483,7 @@ final class AppModel: ObservableObject {
 
     func bookmarks(_ bookID: String) async throws -> [BookmarkEntry] {
         guard let api = api else { throw APIError.badAddress }
-        return try await api.get("api/play/books/bookmarks", ["id": bookID], as: BookmarksResponse.self).bookmarks
+        return BookmarkEntry.numbered(try await api.get("api/play/books/bookmarks", ["id": bookID], as: BookmarksResponse.self).bookmarks)
     }
 
     /// action: remove or rename. Returns the bookmarks as they are now.
@@ -484,7 +492,7 @@ final class AppModel: ObservableObject {
         let r = try await api.post("api/play/books/bookmark", ["item": bookID, "action": action, "time": String(format: "%.1f", time),
                                                                "title": title], as: BookmarksResponse.self)
         if let m = r.message { say(m) }
-        return r.bookmarks
+        return BookmarkEntry.numbered(r.bookmarks)
     }
 
     /// at: start this many seconds into the book (a chapter); otherwise her place when resume is true.
@@ -564,6 +572,9 @@ final class AppModel: ObservableObject {
     func tv(_ command: String) {
         guard let api = api, !isPhone else { return }
         let device = target
+        // Play / Pause shows the other one straight away (a second press then doesn't send the same again)
+        let playPause = command == "pause" || command == "unpause"
+        if playPause { tvState.guess(paused: command == "pause") }
         Task {
             do {
                 let r = try await api.post("api/play/cmd", ["device": device, "cmd": command], as: MessageResponse.self)
@@ -577,6 +588,7 @@ final class AppModel: ObservableObject {
                 await self.refreshStatus()
                 if command == "stop" { await self.loadContinue(); await self.loadContinueBooks() }
             } catch {
+                if playPause { self.tvState.clearGuess() }
                 self.say(error.localizedDescription)
             }
         }
@@ -600,37 +612,153 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Play or Pause on the TV, by what the screen shows (it changes straight away when pressed).
+    func tvPlayPause() {
+        tv(tvState.paused ? "unpause" : "pause")
+    }
+
+    /// Magic Tap (two-finger double tap): play or pause what's playing - on this phone, together, or on the TV.
+    func playPause() {
+        if together.active { together.command("playpause"); return }
+        if isPhone {
+            if book.active { book.togglePause() }
+            else if phone.active { phone.togglePause() }
+            else if !resumeLast() { say("Nothing is playing.") }
+            return
+        }
+        guard tvStatus?.playing == true else { say("Nothing is playing on the TV."); return }
+        tvPlayPause()
+    }
+
     func whereAmI() {
+        Task { self.say(await self.whereAmIText()) }
+    }
+
+    /// What's playing, where she is in it and the time left (the Where am I? button, and Siri).
+    func whereAmIText() async -> String {
         if isPhone && book.active {
-            if book.preparing { say(book.statusText); return }
+            if book.preparing { return book.statusText }
             var text = Speak.whereAmI(title: book.title, position: book.currentTime(), total: book.duration, paused: book.paused, on: " on this phone")
             if let chapter = book.chapterSentence(book.currentTime()) { text += " " + chapter }
             if let sleep = book.sleepText { text += " " + sleep }
-            say(text)
-            return
+            return text
         }
         if isPhone {
-            guard phone.active else { say("Nothing is playing on this phone."); return }
-            if phone.preparing { say(phone.statusText); return }
-            say(Speak.whereAmI(title: phone.title, position: phone.currentTime(), total: phone.duration,
-                               paused: phone.paused, on: " on this phone"))
-            return
+            guard phone.active else { return "Nothing is playing on this phone." }
+            if phone.preparing { return phone.statusText }
+            return Speak.whereAmI(title: phone.title, position: phone.currentTime(), total: phone.duration,
+                                  paused: phone.paused, on: " on this phone")
         }
-        Task {
-            await self.refreshStatus()
-            guard let s = self.tvStatus else { self.say("Couldn't reach the TV."); return }
-            if s.book == true {
-                self.say(s.text)
-            } else if s.playing, let pos = s.posTicks, let run = s.runTicks, run > 0 {
-                var text = Speak.whereAmI(title: s.title ?? "", position: pos / 10_000_000, total: run / 10_000_000,
-                                          paused: s.paused ?? false, on: "")
-                if s.ad == false && s.hasAD == true { text += " Audio description is off." }
-                if s.hasAD == false { text += " No audio description track." }
-                self.say(text)
-            } else {
-                self.say(s.text)
+        await refreshStatus()
+        guard let s = tvStatus else { return "Couldn't reach the TV." }
+        if s.book == true { return s.text }
+        if s.playing, let pos = s.posTicks, let run = s.runTicks, run > 0 {
+            var text = Speak.whereAmI(title: s.title ?? "", position: pos / 10_000_000, total: run / 10_000_000,
+                                      paused: s.paused ?? false, on: "")
+            if s.ad == false && s.hasAD == true { text += " Audio description is off." }
+            if s.hasAD == false { text += " No audio description track." }
+            return text
+        }
+        return s.text
+    }
+
+    // MARK: Siri and the Shortcuts app
+
+    private enum Match {
+        case item(Item)
+        case book(BookItem)
+    }
+
+    /// "Play … in AD Player": finds it on the PC (movies, shows, episodes, audiobooks) and plays the best match where
+    /// Play on is set. A show plays its next episode. Returns what Siri says.
+    func playBestMatch(_ asked: String) async -> String {
+        let q = asked.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return "Say what to play." }
+        guard api != nil else { return "Set up AD Player first: type the address of the PC." }
+        guard !needSignIn else { return "Sign in to AD Player first." }
+        // "friends 4 2": one episode was asked for
+        let wantsEpisode = q.range(of: #"\d+\s+\d+\s*$"#, options: .regularExpression) != nil
+        var best: (score: Double, match: Match)?
+        var problem: String?
+        func consider(_ label: String, _ m: Match, _ bonus: Double) {
+            let sc = AppModel.matchScore(label, q) + bonus
+            if best == nil || sc > best!.score { best = (sc, m) }
+        }
+        for kind in ["search_movies", "search_shows"] {
+            do {
+                for (n, it) in try await list(kind: kind, query: q).enumerated() {
+                    guard ["Movie", "Video", "Episode", "Series"].contains(it.type ?? "") else { continue }
+                    consider(it.label, .item(it), (wantsEpisode && it.type == "Episode" ? 5 : 0) - Double(n) * 0.01)
+                }
+            } catch {
+                problem = problem ?? error.localizedDescription
             }
         }
+        if booksSetUp {
+            do {
+                for (n, b) in try await bookList(kind: "books_search", query: q).enumerated() {
+                    guard !["BookSeries", "BookAuthor", "Chapter"].contains(b.type) else { continue }
+                    consider(b.label, .book(b), -Double(n) * 0.01)
+                }
+            } catch {
+                problem = problem ?? error.localizedDescription
+            }
+        }
+        guard let found = best?.match else { return problem ?? "Nothing found for \(q)." }
+        let place = isPhone ? "" : " on \(AppModel.baseName(targetName))"
+        switch found {
+        case .book(let b):
+            playBook(id: b.id, label: b.label, resume: true)
+            return "Playing \(b.label)\(place)."
+        case .item(let it):
+            if it.type == "Series" {
+                guard let ep = await nextEpisode(of: it) else { return "No episode of \(it.label) is left to watch." }
+                play(ep, resume: true)
+                return "Playing \(ep.label)\(place)."
+            }
+            play(it, resume: true)
+            return "Playing \(it.label)\(place)."
+        }
+    }
+
+    /// 3: the same name, 2: starts with it, 1.5: has it in it, 1: the PC found it some other way (author, say).
+    private static func matchScore(_ label: String, _ asked: String) -> Double {
+        func plain(_ s: String) -> String {
+            s.lowercased().folding(options: .diacriticInsensitive, locale: nil)
+                .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let l = plain(label), a = plain(asked)
+        if a.isEmpty { return 1 }
+        if l == a { return 3 }
+        if l.hasPrefix(a) { return 2 }
+        if l.contains(a) { return 1.5 }
+        return 1
+    }
+
+    /// A show's next episode: the first one, season by season, that's in progress or not watched yet.
+    private func nextEpisode(of series: Item) async -> Item? {
+        guard let all = try? await list(kind: "seasons", parent: series.id) else { return nil }
+        let seasons = all.filter { $0.type == nil || $0.type == "Season" }
+        let regular = seasons.filter { !$0.label.lowercased().contains("special") }
+        for season in regular.isEmpty ? seasons : regular {
+            guard let eps = try? await list(kind: "episodes", parent: season.id) else { continue }
+            if let e = eps.first(where: { $0.canResume || $0.played != true }) { return e }
+        }
+        return nil
+    }
+
+    /// "Resume AD Player": carries on with what's loaded, or the last thing played on this phone.
+    func resumeForSiri() -> String {
+        if together.active { together.command("play"); return "Playing together." }
+        if isPhone && book.active { book.play(); return "Playing \(book.title)." }
+        if isPhone && phone.active { phone.play(); return "Playing \(phone.title)." }
+        if !isPhone, let s = tvStatus, s.playing {
+            if s.paused == true { tv("unpause") }
+            return "Playing \(s.title ?? "") on the TV."
+        }
+        let last = LastPlay.load()
+        if resumeLast() { return "Carrying on with \(last?.title ?? "the last one")." }
+        return api == nil ? "Set up AD Player first: type the address of the PC." : "Nothing to carry on with yet."
     }
 
     // MARK: app comes and goes
@@ -793,6 +921,8 @@ final class AppModel: ObservableObject {
             MainActor.assumeIsolated {
                 self?.phone.saveNow()
                 self?.book.saveNow()
+                // swiped away while paused together: it leaves the room, so the others aren't kept waiting
+                self?.together.leaveIfIdle()
             }
         }
     }
@@ -856,5 +986,32 @@ final class AppModel: ObservableObject {
             KeepAlive.shared.stop()
             Sound.deactivate()
         }
+    }
+}
+
+/// The TV's state (asked every few seconds while Now playing is open). Kept apart from the model so only the
+/// screens that show it are redrawn, and only when something really changed.
+@MainActor
+final class TVState: ObservableObject {
+    @Published private(set) var status: TVStatus?
+    /// Play or Pause just pressed: shown straight away, until the TV says the same (or a few seconds pass).
+    @Published private(set) var pausedGuess: Bool?
+    private var guessAt = Date.distantPast
+
+    /// Paused, as the screen shows it.
+    var paused: Bool { pausedGuess ?? (status?.paused ?? false) }
+
+    func set(_ s: TVStatus?) {
+        if let g = pausedGuess, s == nil || s?.paused == g || Date().timeIntervalSince(guessAt) > 4 { pausedGuess = nil }
+        if status != s { status = s }
+    }
+
+    func guess(paused: Bool) {
+        pausedGuess = paused
+        guessAt = Date()
+    }
+
+    func clearGuess() {
+        if pausedGuess != nil { pausedGuess = nil }
     }
 }

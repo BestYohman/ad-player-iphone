@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct ADPlayerApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var model = AppModel()
+    @StateObject private var model = AppModel.shared
 
     var body: some Scene {
         WindowGroup {

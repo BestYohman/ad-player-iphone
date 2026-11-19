@@ -22,7 +22,44 @@ struct RootView: View {
         // adplayer://join - from a "play together" notification: show the Join button straight away
         .onOpenURL { _ in Task { await model.together.pollInvites() } }
         .onAppear { model.scene(active: true) }
+        // two-finger double tap: play or pause, here or on the TV
+        .accessibilityAction(.magicTap) { model.playPause() }
     }
+}
+
+/// A section's name, read by VoiceOver as a heading (so the rotor's Headings jumps between the parts).
+struct Heading: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// The buttons under a row: side by side, or one under the other when large text doesn't fit across.
+struct ButtonRow<Content: View>: View {
+    let content: () -> Content
+    init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack { content() }
+            VStack(alignment: .leading) { content() }
+        }
+    }
+}
+
+extension View {
+    /// A VoiceOver action (swipe up or down on the row), only when it applies.
+    @ViewBuilder func voiceOverAction(_ name: String, if on: Bool = true, _ run: @escaping () -> Void) -> some View {
+        if on { accessibilityAction(named: Text(name), run) } else { self }
+    }
+}
+
+/// "12 minutes of 45 minutes"
+func placeText(_ pos: Double, _ total: Double) -> String {
+    total > 0 ? "\(Speak.position(pos)) of \(Speak.duration(total))" : Speak.position(pos)
 }
 
 // MARK: - Address of the PC
@@ -61,12 +98,7 @@ struct SetupView: View {
                 }
                 if !first {
                     Section {
-                        Picker("Headphone delay when playing together", selection: Binding(get: { model.together.delayChoice },
-                                                                                        set: { model.together.delayChoice = $0 })) {
-                            ForEach(Together.delays, id: \.0) { d in
-                                Text(d.1).tag(d.0)
-                            }
-                        }
+                        DelayPicker(together: model.together)
                     } footer: {
                         Text("Auto asks iPhone how late the headphones are (AirPods are about 0.2 seconds), so both of you hear it at the same moment.")
                     }
@@ -81,11 +113,12 @@ struct SetupView: View {
                         Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through the address above.")
                         if let name = model.me?.name, !name.isEmpty, !model.needSignIn {
                             Text("Signed in as \(name).")
-                            Button("Sign out") { model.signOut(); dismiss() }
+                            SignOutButton { dismiss() }
                         }
                     }
                 }
             }
+            .accessibilityAction(.escape) { dismiss() }
             .navigationTitle(first ? "Set up AD Player" : "Settings")
             .toolbar {
                 if !first {
@@ -114,6 +147,35 @@ struct SetupView: View {
                 if !first { dismiss() }
             }
         }
+    }
+}
+
+struct DelayPicker: View {
+    @ObservedObject var together: Together
+
+    var body: some View {
+        Picker("Headphone delay when playing together", selection: $together.delayChoice) {
+            ForEach(Together.delays, id: \.0) { d in
+                Text(d.1).tag(d.0)
+            }
+        }
+    }
+}
+
+/// Sign out, asked first: she'd have to type the password again.
+struct SignOutButton: View {
+    @EnvironmentObject var model: AppModel
+    var done: () -> Void = {}
+    @State private var ask = false
+
+    var body: some View {
+        Button("Sign out") { ask = true }
+            .confirmationDialog("Sign out?", isPresented: $ask, titleVisibility: .visible) {
+                Button("Sign out", role: .destructive) { model.signOut(); done() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("You'll need the password to sign in again.")
+            }
     }
 }
 
@@ -189,6 +251,9 @@ struct HomeView: View {
     @State private var searchFor: String?
     @State private var progress: [Item] = []
     @State private var progressLoading = false
+    @State private var progressProblem: String?
+    @State private var progressAt: Date?
+    @State private var progressKind = ""
 
     private var kinds: [(String, String)] {
         (model.booksSetUp ? [("books", "Audiobooks")] : []) + [("shows", "Shows"), ("movies", "Movies")]
@@ -200,7 +265,7 @@ struct HomeView: View {
         NavigationStack {
             List {
                 InvitesSection(together: model.together)
-                NowPlayingRow(phone: model.phone, book: model.book)
+                NowPlayingRow(phone: model.phone, book: model.book, together: model.together, tv: model.tvState)
 
                 Section {
                     Picker("Play on", selection: $model.target) {
@@ -219,7 +284,7 @@ struct HomeView: View {
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Play")
                 } header: {
-                    Text("TV")
+                    Heading("TV")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if !model.otherDevices.isEmpty {
@@ -240,15 +305,17 @@ struct HomeView: View {
                         NavigationLink("Series") { BookListView(kind: "books_series", parent: nil, title: "Audiobook series") }
                         NavigationLink("Authors") { BookListView(kind: "books_authors", parent: nil, title: "Audiobook authors") }
                     } header: {
-                        Text("Audiobooks")
+                        Heading("Audiobooks")
                     } footer: {
                         Text("A title, author, narrator or series.")
                     }
-                    Section("Continue listening") {
+                    Section {
                         if model.continueBooks.isEmpty {
                             Text(model.booksNote.isEmpty ? "Nothing in progress." : model.booksNote)
                         }
                         ForEach(model.continueBooks) { item in BookRow(item: item) }
+                    } header: {
+                        Heading("Continue listening")
                     }
                 } else {
                     Section {
@@ -275,38 +342,47 @@ struct HomeView: View {
                                          empty: "Nothing asked for yet. Shows and movies without description have an Ask for audio description button.")
                         }
                     } header: {
-                        Text(movies ? "Movies" : "Shows")
+                        Heading(movies ? "Movies" : "Shows")
                     } footer: {
                         if !movies { Text("For one episode, type the show, season and episode, like: friends 4 2") }
                     }
-                    Section(movies ? "Movies in progress" : "Shows in progress") {
+                    Section {
                         if progress.isEmpty {
-                            Text(progressLoading ? "Loading…" : "Nothing in progress.")
+                            Text(progressLoading ? "Loading…" : (progressProblem ?? "Nothing in progress."))
+                        } else if let problem = progressProblem {
+                            Text(problem)
                         }
                         ForEach(progress) { item in ItemRow(item: item) }
+                    } header: {
+                        Heading(movies ? "Movies in progress" : "Shows in progress")
                     }
                 }
 
                 Section {
                     NavigationLink { DownloadsView() } label: { DownloadsLabel(offline: Offline.shared) }
+                        .accessibilityAddTraits(.isHeader)
                 } footer: {
                     Text("Episodes, movies and audiobooks kept on this phone, to play with no connection.")
                 }
 
                 if !model.message.isEmpty {
-                    Section("Last message") {
+                    Section {
                         Text(model.message)
+                    } header: {
+                        Heading("Last message")
                     }
                 }
 
-                Section("You") {
+                Section {
                     if let name = model.me?.name, !name.isEmpty {
                         Text("Signed in as \(name).")
                     }
                     Button("Settings") { showSettings = true }
                     if let name = model.me?.name, !name.isEmpty, !model.needSignIn {
-                        Button("Sign out") { model.signOut() }
+                        SignOutButton()
                     }
+                } header: {
+                    Heading("You")
                 }
             }
             .navigationTitle("AD Player")
@@ -315,14 +391,21 @@ struct HomeView: View {
                     if shown == "books" { BookSearchView(initial: q) } else { SearchView(kind: "search_\(shown)", initial: q) }
                 }
             }
-            .task(id: shown) { await loadProgress() }
+            // once when it opens or the kind changes; coming back from a list it's only fetched again after 5 minutes
+            .task(id: shown) { await loadProgress(ifOld: true) }
             .onChange(of: model.continueItems) { _ in Task { await loadProgress() } }   // after Stop, a TV finishing…
-            .refreshable { await model.refreshAll(); await loadProgress() }
+            .refreshable {
+                let before = progressProblem
+                await model.refreshAll()
+                await loadProgress()
+                if let p = progressProblem, before != nil { model.announce(p) }     // (a new problem is said already)
+            }
             .sheet(isPresented: $showSettings) {
                 SetupView(first: false).environmentObject(model)
             }
             .fullScreenCover(isPresented: $model.showPlayer) {
-                NowPlayingView(phone: model.phone, book: model.book).environmentObject(model)
+                NowPlayingView(phone: model.phone, book: model.book, together: model.together, tv: model.tvState)
+                    .environmentObject(model)
             }
         }
         .id(model.homeToken)
@@ -334,11 +417,30 @@ struct HomeView: View {
         searchFor = q
     }
 
-    private func loadProgress() async {
+    /// ifOld: only when it hasn't been fetched in the last 5 minutes.
+    private func loadProgress(ifOld: Bool = false) async {
         guard shown != "books" else { return }
+        let kind = shown
+        if ifOld, progressKind == kind, let at = progressAt, Date().timeIntervalSince(at) < 300 { return }
+        if progressKind != kind { progress = []; progressProblem = nil }
         progressLoading = true
         defer { progressLoading = false }
-        if let items = try? await model.list(kind: "continue_\(shown)") { progress = items }
+        do {
+            let items = try await model.list(kind: "continue_\(kind)")
+            guard kind == shown else { return }
+            progress = items
+            progressProblem = nil
+            progressAt = Date()
+            progressKind = kind
+        } catch {
+            guard !Task.isCancelled, kind == shown else { return }
+            // the real reason, not "Nothing in progress" (said once, when it starts going wrong)
+            let was = progressProblem
+            progressProblem = error.localizedDescription
+            progressKind = kind
+            progressAt = nil
+            if was == nil { model.announce(error.localizedDescription) }
+        }
     }
 }
 
@@ -348,11 +450,13 @@ struct InvitesSection: View {
 
     var body: some View {
         if !together.active && !together.invites.isEmpty {
-            Section("Play together") {
+            Section {
                 ForEach(together.invites) { inv in
                     Button("Join \(inv.by): \(inv.title)") { together.join(inv) }
                         .accessibilityHint("\(inv.by) wants to \(inv.kind == "book" ? "listen to" : "play") it together.")
                 }
+            } header: {
+                Heading("Play together")
             }
         }
     }
@@ -363,22 +467,25 @@ struct NowPlayingRow: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var phone: PhonePlayer
     @ObservedObject var book: BookPlayer
+    @ObservedObject var together: Together
+    @ObservedObject var tv: TVState
 
     var body: some View {
         if let title = nowTitle {
             Section {
                 Button("Now playing: \(title)") { model.showPlayer = true }
+                    .accessibilityAddTraits(.isHeader)
             }
         }
     }
 
     private var nowTitle: String? {
-        if model.together.active { return model.together.room?.title ?? "playing together" }
+        if together.active { return together.room?.title ?? "playing together" }
         if model.isPhone {
             if book.active { return book.title }
             return phone.active ? phone.title : nil
         }
-        if let s = model.tvStatus, s.playing { return s.title ?? s.text }
+        if let s = tv.status, s.playing { return s.title ?? s.text }
         return nil
     }
 }
@@ -387,26 +494,50 @@ struct NowPlayingRow: View {
 
 struct ItemRow: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var offline = Offline.shared
     let item: Item
     @State private var favorite: Bool?
     @State private var requested: Bool?
+
+    private var fav: Bool { favorite ?? (item.favorite ?? false) }
+    private var asked: Bool { requested ?? (item.requested ?? false) }
+    private var canFavorite: Bool { item.type == "Series" || item.type == "Movie" }
+    private var canAsk: Bool { item.hasAD == false }
+    private var downloadable: Bool { item.type == "Episode" || item.type == "Movie" || item.type == "Video" }
+
+    /// What VoiceOver reads for the row: its name, and whether it's on the phone.
+    private var rowLabel: String {
+        guard downloadable, let s = offline.find(item.id, "audio") else { return item.spoken }
+        let state: String
+        switch s.state {
+        case "done": state = "downloaded"
+        case "failed": state = "didn't download"
+        default: state = "downloading"
+        }
+        return item.spoken + ", " + state
+    }
 
     var body: some View {
         switch item.type ?? "" {
         case "Request":
             Text("\(item.label): \(item.text ?? ""). Asked for on \(item.date ?? "").")
         case "Series":
+            // one VoiceOver stop: the show; its buttons are actions (swipe up or down)
             VStack(alignment: .leading, spacing: 6) {
                 NavigationLink(item.spoken) {
                     ItemListView(kind: "seasons", parent: item.id, title: "\(item.label) seasons")
                 }
-                actions
+                .voiceOverAction(favoriteName, if: canFavorite) { toggleFavorite() }
+                .voiceOverAction(askName, if: canAsk) { ask() }
+                ButtonRow { actionButtons }
+                    .accessibilityHidden(true)
             }
         case "Season":
             NavigationLink(item.spoken) {
                 ItemListView(kind: "episodes", parent: item.id, title: item.label)
             }
         default:
+            // one VoiceOver stop: the row plays it; the buttons beside it are actions (swipe up or down)
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     model.play(item, resume: true)
@@ -416,53 +547,61 @@ struct ItemRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(rowLabel)
                 .accessibilityHint(item.canResume ? "Plays from where you left off." : "Plays it.")
+                .voiceOverAction("Play together") { model.play(item, resume: true, together: true) }
+                .voiceOverAction("Start over", if: item.canResume) { model.play(item, resume: false) }
+                .voiceOverAction(DownloadButton.text(offline, offline.find(item.id, "audio")), if: downloadable) { download() }
+                .voiceOverAction(favoriteName, if: canFavorite) { toggleFavorite() }
+                .voiceOverAction(askName, if: canAsk) { ask() }
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
                         Button("Play together") { model.play(item, resume: true, together: true) }
                             .buttonStyle(.bordered)
-                            .accessibilityLabel("Play \(item.label) together")
-                            .accessibilityHint("It also plays on another person's phone, in step. They get a Join button.")
                         if item.canResume {
                             Button("Start over") { model.play(item, resume: false) }
                                 .buttonStyle(.bordered)
-                                .accessibilityLabel("Start \(item.label) from the beginning")
                         }
-                        if item.type == "Episode" || item.type == "Movie" || item.type == "Video" {
-                            DownloadButton(offline: Offline.shared, id: item.id, kind: "audio", label: item.label) {
-                                Offline.shared.download(item)
-                            }
+                        if downloadable {
+                            DownloadButton(offline: offline, id: item.id, kind: "audio", label: item.label) { download() }
                         }
-                        actions
+                        actionButtons
                     }
                 }
+                .accessibilityHidden(true)
             }
         }
     }
 
+    private var favoriteName: String { fav ? "Remove from favorites" : "Add to favorites" }
+    private var askName: String { asked ? "Asked for audio description" : "Ask for audio description" }
+
+    private func download() {
+        DownloadButton.press(offline, id: item.id, kind: "audio", label: item.label) { offline.download(item) }
+    }
+
+    private func toggleFavorite() {
+        let on = !fav
+        Task {
+            if let m = await model.setFavorite(item, on: on) { favorite = on; model.announce(m) }
+        }
+    }
+
+    private func ask() {
+        Task {
+            if let m = await model.requestAD(item) { requested = true; model.announce(m) }
+        }
+    }
+
     /// Add to favorites (shows and movies) and Ask for audio description (ones without it), as on the web page.
-    @ViewBuilder private var actions: some View {
-        let fav = favorite ?? (item.favorite ?? false)
-        let asked = requested ?? (item.requested ?? false)
-        HStack {
-            if item.type == "Series" || item.type == "Movie" {
-                Button(fav ? "Remove from favorites" : "Add to favorites") {
-                    Task {
-                        if let m = await model.setFavorite(item, on: !fav) { favorite = !fav; model.announce(m) }
-                    }
-                }
+    @ViewBuilder private var actionButtons: some View {
+        if canFavorite {
+            Button(favoriteName) { toggleFavorite() }
                 .buttonStyle(.bordered)
-                .accessibilityLabel(fav ? "Remove \(item.label) from favorites" : "Add \(item.label) to favorites")
-            }
-            if item.hasAD == false {
-                Button(asked ? "Asked for audio description" : "Ask for audio description") {
-                    Task {
-                        if let m = await model.requestAD(item) { requested = true; model.announce(m) }
-                    }
-                }
+        }
+        if canAsk {
+            Button(askName) { ask() }
                 .buttonStyle(.bordered)
-                .accessibilityLabel((asked ? "Asked for audio description for " : "Ask for audio description for ") + item.label)
-            }
         }
     }
 }
@@ -472,13 +611,22 @@ struct ItemListView: View {
     let kind: String
     let parent: String?
     let title: String
-    var empty = "Nothing here."
+    let empty: String
     @State private var items: [Item] = []
     @State private var loading = true
     @State private var problem: String?
-    @State private var view = ListView()
-    @State private var viewLoaded = false
+    @State private var view: ListView
+    @State private var loadedAt: Date?
     @State private var showSort = false
+
+    init(kind: String, parent: String?, title: String, empty: String = "Nothing here.") {
+        self.kind = kind
+        self.parent = parent
+        self.title = title
+        self.empty = empty
+        // the saved sort and filters are there before the first load (so it loads once, and says nothing)
+        _view = State(initialValue: ListView.applies(kind) ? ListView.load(kind) : ListView())
+    }
 
     private var sortable: Bool { ListView.applies(kind) }
 
@@ -505,10 +653,8 @@ struct ItemListView: View {
         }
         .navigationTitle(items.isEmpty ? title : "\(title) (\(items.count))")
         .homeBar()
-        .task {
-            if !viewLoaded { view = ListView.load(kind); viewLoaded = true }
-            await load()
-        }
+        // once when it opens; back from a deeper list it's only fetched again after 5 minutes (or pull to refresh)
+        .task { if loadedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true { await load() } }
         .refreshable { await load() }
         .sheet(isPresented: $showSort) {
             SortFilterView(kind: kind, view: $view).environmentObject(model)
@@ -524,12 +670,16 @@ struct ItemListView: View {
         do {
             items = try await model.list(kind: kind, parent: parent, view: sortable ? view : nil)
             problem = nil
+            loadedAt = Date()
             if announce {
                 model.announce(items.isEmpty ? (view.filtersOn > 0 ? "Nothing matches these filters." : "Nothing here.")
                                              : "\(items.count) item\(items.count == 1 ? "" : "s").")
             }
         } catch {
+            if Task.isCancelled { loading = false; return }      // (left the screen before it came)
             problem = error.localizedDescription
+            loadedAt = nil
+            if announce { model.announce(error.localizedDescription) }
         }
         loading = false
     }
@@ -592,6 +742,7 @@ struct SortFilterView: View {
                     if choices == nil { Text("Getting the genres, ratings and years…") }
                 }
             }
+            .accessibilityAction(.escape) { dismiss() }
             .navigationTitle("Sort and filter")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -615,7 +766,9 @@ struct HomeBar: ViewModifier {
     @EnvironmentObject var model: AppModel
 
     func body(content: Content) -> some View {
-        content.toolbar {
+        content
+            .accessibilityAction(.magicTap) { model.playPause() }
+            .toolbar {
             ToolbarItem(placement: .bottomBar) {
                 Button {
                     model.goHome()
@@ -657,10 +810,12 @@ struct SearchView: View {
                 Text(note)
             }
             if !items.isEmpty {
-                Section("Found") {
+                Section {
                     ForEach(items) { item in
                         ItemRow(item: item)
                     }
+                } header: {
+                    Heading("Found")
                 }
             }
         }
@@ -707,19 +862,26 @@ struct DownloadButton: View {
     let label: String
     let start: () -> Void
 
+    /// The button's words (also the row's VoiceOver action).
+    static func text(_ offline: Offline, _ s: Offline.Saved?) -> String {
+        guard let s = s else { return "Download" }
+        switch s.state {
+        case "done": return "Downloaded"
+        case "failed": return "Download again"
+        case "preparing": return "Getting ready" + (s.progress > 0 ? " \(s.progress)%" : "")
+        default: return (offline.wifiWait ? "Waiting for Wi-Fi" : "Downloading") + (s.progress > 0 ? " \(s.progress)%" : "")
+        }
+    }
+
+    /// Starts it, or (once it's on its way) says how it's going.
+    static func press(_ offline: Offline, id: String, kind: String, label: String, start: () -> Void) {
+        if let s = offline.find(id, kind), s.state != "failed" { offline.say("\(label): \(s.stateText).") } else { start() }
+    }
+
     var body: some View {
         let s = offline.find(id, kind)
-        let text: String = {
-            guard let s = s else { return "Download" }
-            switch s.state {
-            case "done": return "Downloaded"
-            case "failed": return "Download again"
-            case "preparing": return "Getting ready" + (s.progress > 0 ? " \(s.progress)%" : "")
-            default: return (offline.wifiWait ? "Waiting for Wi-Fi" : "Downloading") + (s.progress > 0 ? " \(s.progress)%" : "")
-            }
-        }()
-        Button(text) {
-            if let s = s, s.state != "failed" { offline.say("\(label): \(s.stateText).") } else { start() }
+        Button(DownloadButton.text(offline, s)) {
+            DownloadButton.press(offline, id: id, kind: kind, label: label, start: start)
         }
         .buttonStyle(.bordered)
         .accessibilityLabel(s == nil ? "Download \(label)" : "\(label): \(s!.stateText)")
@@ -730,6 +892,7 @@ struct DownloadButton: View {
 struct DownloadsView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var offline = Offline.shared
+    @State private var removing: Offline.Saved?
 
     var body: some View {
         List {
@@ -737,6 +900,7 @@ struct DownloadsView: View {
                 Text("Nothing downloaded yet. Use Download beside an episode, a movie or an audiobook.")
             }
             ForEach(Array(offline.items.reversed())) { s in
+                // one VoiceOver stop: the row plays it; Try again and Remove are actions (swipe up or down)
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
                         if s.done { model.playDownloaded(s) } else { offline.say("\(s.title): \(s.stateText).") }
@@ -750,16 +914,17 @@ struct DownloadsView: View {
                     .buttonStyle(.borderless)
                     .accessibilityElement(children: .combine)
                     .accessibilityHint(s.done ? "Plays it on this phone." : "")
-                    HStack {
+                    .voiceOverAction("Try again", if: s.state == "failed") { offline.retry(s) }
+                    .voiceOverAction(s.done ? "Remove" : "Stop downloading") { removing = s }
+                    ButtonRow {
                         if s.state == "failed" {
                             Button("Try again") { offline.retry(s) }
                                 .buttonStyle(.bordered)
-                                .accessibilityLabel("Try downloading \(s.title) again")
                         }
-                        Button(s.done ? "Remove" : "Stop", role: .destructive) { offline.remove(s) }
+                        Button(s.done ? "Remove" : "Stop", role: .destructive) { removing = s }
                             .buttonStyle(.bordered)
-                            .accessibilityLabel((s.done ? "Remove the download of " : "Stop downloading ") + s.title)
                     }
+                    .accessibilityHidden(true)
                 }
             }
             if !offline.items.isEmpty {
@@ -772,6 +937,15 @@ struct DownloadsView: View {
         .navigationTitle("Downloads")
         .homeBar()
         .onAppear { offline.resume() }
+        // asked first: it would have to be downloaded again
+        .confirmationDialog(removing?.done == false ? "Stop this download?" : "Remove this download?",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible, presenting: removing) { s in
+            Button(s.done ? "Remove" : "Stop", role: .destructive) { offline.remove(s); removing = nil }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: { s in
+            Text(s.done ? "\(s.title) is taken off this phone." : "\(s.title) stops downloading.")
+        }
     }
 }
 
@@ -781,12 +955,14 @@ struct NowPlayingView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var phone: PhonePlayer
     @ObservedObject var book: BookPlayer
+    @ObservedObject var together: Together
+    @ObservedObject var tv: TVState
 
     var body: some View {
         NavigationStack {
             List {
-                if model.together.active {
-                    TogetherControls(together: model.together, book: book)
+                if together.active {
+                    TogetherControls(together: together, book: book, phone: phone)
                 } else {
                     soloControls
                 }
@@ -795,6 +971,8 @@ struct NowPlayingView: View {
                     Button("Find something else") { model.showPlayer = false }
                 }
             }
+            // VoiceOver's escape (two-finger scrub) closes it, like Find something else
+            .accessibilityAction(.escape) { model.showPlayer = false }
             .navigationTitle("Now playing")
             .navigationBarTitleDisplayMode(.inline)
             .homeBar()
@@ -803,14 +981,23 @@ struct NowPlayingView: View {
 
     @ViewBuilder private var soloControls: some View {
                 Section {
+                    // swipe up or down: forward or back 30 seconds
                     Text(statusText)
                         .accessibilityAddTraits(.updatesFrequently)
+                        .accessibilityValue(place.map { placeText($0.0, $0.1) } ?? "")
+                        .accessibilityAdjustableAction { d in
+                            switch d {
+                            case .increment: move(30)
+                            case .decrement: move(-30)
+                            @unknown default: break
+                            }
+                        }
                 }
                 if model.isPhone && book.active {
                     bookControls
                 } else if model.isPhone {
                     phoneControls
-                } else if model.tvStatus?.book == true {
+                } else if tv.status?.book == true {
                     tvBookControls
                 } else {
                     tvControls
@@ -819,7 +1006,21 @@ struct NowPlayingView: View {
 
     private var statusText: String {
         if model.isPhone { return book.active ? book.statusText : phone.statusText }
-        return model.tvStatus?.text ?? "Checking the TV…"
+        return tv.status?.text ?? "Checking the TV…"
+    }
+
+    /// Where it is and how long it is, in seconds.
+    private var place: (Double, Double)? {
+        if model.isPhone && book.active { return book.preparing ? nil : (book.position, book.duration) }
+        if model.isPhone { return phone.active && !phone.preparing ? (phone.position, phone.duration) : nil }
+        guard let s = tv.status, s.playing, let pos = s.posTicks else { return nil }
+        return (pos / 10_000_000, (s.runTicks ?? 0) / 10_000_000)
+    }
+
+    private func move(_ by: Double) {
+        if model.isPhone && book.active { book.skip(by, quiet: true) }       // (VoiceOver reads the new place)
+        else if model.isPhone { phone.skip(by, quiet: true) }
+        else { model.tv(by < 0 ? "back30" : "fwd30") }
     }
 
     @ViewBuilder private var phoneControls: some View {
@@ -838,9 +1039,9 @@ struct NowPlayingView: View {
     }
 
     @ViewBuilder private var tvControls: some View {
-        let s = model.tvStatus
+        let s = tv.status
         Section {
-            Button(s?.paused == true ? "Play" : "Pause") { model.tv(s?.paused == true ? "unpause" : "pause") }
+            Button(tv.paused ? "Play" : "Pause") { model.tvPlayPause() }
             Button("Back 30 seconds") { model.tv("back30") }
             Button("Forward 30 seconds") { model.tv("fwd30") }
             if s?.hasNext == true {
@@ -851,9 +1052,11 @@ struct NowPlayingView: View {
             }
             Button("Stop") { model.tv("stop") }
         }
-        Section("TV volume") {
+        Section {
             Button("Volume down") { model.tv("voldown") }
             Button("Volume up") { model.tv("volup") }
+        } header: {
+            Heading("TV volume")
         }
     }
 
@@ -877,7 +1080,7 @@ struct NowPlayingView: View {
             NavigationLink("Bookmarks") { BookmarkList(bookID: book.bookID, bookTitle: book.title) }
             Button("Stop") { book.stop() }
         }
-        Section("Listening") {
+        Section {
             Picker("Speed", selection: Binding(get: { book.speed }, set: { book.setSpeed($0) })) {
                 ForEach(BookPlayer.speeds, id: \.self) { v in
                     Text(BookPlayer.speedLabel(v)).tag(v)
@@ -888,13 +1091,15 @@ struct NowPlayingView: View {
                     Text(c.label).tag(c.value)
                 }
             }
+        } header: {
+            Heading("Listening")
         }
     }
 
     @ViewBuilder private var tvBookControls: some View {
-        let s = model.tvStatus
+        let s = tv.status
         Section {
-            Button(s?.paused == true ? "Play" : "Pause") { model.tv(s?.paused == true ? "unpause" : "pause") }
+            Button(tv.paused ? "Play" : "Pause") { model.tvPlayPause() }
             Button("Back 30 seconds") { model.tv("back30") }
             Button("Forward 30 seconds") { model.tv("fwd30") }
             if s?.hasPrev == true {
@@ -912,16 +1117,20 @@ struct NowPlayingView: View {
             }
             Button("Stop") { model.tv("stop") }
         }
-        Section("Listening") {
+        Section {
             Picker("Sleep timer", selection: Binding(get: { s?.sleepVal ?? "off" }, set: { model.tv("sleep:" + $0) })) {
                 ForEach(BookPlayer.sleepChoices, id: \.value) { c in
                     Text(c.label).tag(c.value)
                 }
             }
+        } header: {
+            Heading("Listening")
         }
-        Section("TV volume") {
+        Section {
             Button("Volume down") { model.tv("voldown") }
             Button("Volume up") { model.tv("volup") }
+        } header: {
+            Heading("TV volume")
         }
     }
 }
@@ -931,12 +1140,22 @@ struct TogetherControls: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var together: Together
     @ObservedObject var book: BookPlayer
+    @ObservedObject var phone: PhonePlayer          // (getting the audio ready shows how far it's got)
     @State private var askStop = false
 
     var body: some View {
         Section {
+            // swipe up or down: forward or back 30 seconds, for everyone
             Text(together.statusText)
                 .accessibilityAddTraits(.updatesFrequently)
+                .accessibilityValue(placeText(together.place.pos, together.place.total))
+                .accessibilityAdjustableAction { d in
+                    switch d {
+                    case .increment: together.command("fwd30")
+                    case .decrement: together.command("back30")
+                    @unknown default: break
+                    }
+                }
         }
         Section {
             Button(together.paused ? "Play" : "Pause") { together.command("playpause") }
@@ -966,12 +1185,14 @@ struct TogetherControls: View {
             Button("Leave - the others carry on") { together.leave(quiet: false) }
         }
         if together.isBook {
-            Section("Listening") {
+            Section {
                 Picker("Speed", selection: Binding(get: { together.room?.rate ?? 1 }, set: { together.setSpeed($0) })) {
                     ForEach(BookPlayer.speeds, id: \.self) { v in
                         Text(BookPlayer.speedLabel(v)).tag(v)
                     }
                 }
+            } header: {
+                Heading("Listening")
             }
         }
     }
@@ -981,8 +1202,22 @@ struct TogetherControls: View {
 
 struct BookRow: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var offline = Offline.shared
     let item: BookItem
     @State private var showChapters = false
+
+    private var canStartOver: Bool { item.canResume || item.finished == true }
+    private var hasChapters: Bool { (item.chapters ?? 0) > 1 }
+
+    /// What VoiceOver reads for the row: the book, and whether it's on the phone.
+    private var rowLabel: String {
+        guard let s = offline.find(item.id, "book") else { return item.spoken }
+        switch s.state {
+        case "done": return item.spoken + ", downloaded"
+        case "failed": return item.spoken + ", didn't download"
+        default: return item.spoken + ", downloading"
+        }
+    }
 
     var body: some View {
         switch item.type {
@@ -999,6 +1234,7 @@ struct BookRow: View {
                 model.playBook(id: item.book ?? "", label: item.bookTitle ?? "", resume: false, at: item.start ?? 0)
             }
         default:
+            // one VoiceOver stop: the row plays it; the buttons under it are actions (swipe up or down)
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     model.playBook(id: item.id, label: item.label, resume: true)
@@ -1008,32 +1244,31 @@ struct BookRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(rowLabel)
                 .accessibilityHint(item.canResume ? "Plays from where you left off." : "Plays it.")
-                Group {
-                    HStack {
-                        Button("Play together") { model.playBook(id: item.id, label: item.label, resume: true, together: true) }
+                .voiceOverAction("Play together") { playTogether() }
+                .voiceOverAction("Start over", if: canStartOver) { startOver() }
+                .voiceOverAction("Chapters", if: hasChapters) { showChapters = true }
+                .voiceOverAction(DownloadButton.text(offline, offline.find(item.id, "book"))) { download() }
+                ButtonRow {
+                    Button("Play together") { playTogether() }
+                        .buttonStyle(.bordered)
+                    if canStartOver {
+                        Button("Start over") { startOver() }
                             .buttonStyle(.bordered)
-                            .accessibilityLabel("Play \(item.label) together")
-                            .accessibilityHint("It also plays on another person's phone, in step. They get a Join button.")
-                        if item.canResume || item.finished == true {
-                            Button("Start over") { model.playBook(id: item.id, label: item.label, resume: false, at: 0) }
-                                .buttonStyle(.bordered)
-                                .accessibilityLabel("Start \(item.label) from the beginning")
-                        }
-                        if (item.chapters ?? 0) > 1 {
-                            Button("Chapters") { showChapters = true }
-                                .buttonStyle(.bordered)
-                                .accessibilityLabel("Chapters of \(item.label)")
-                        }
-                        DownloadButton(offline: Offline.shared, id: item.id, kind: "book", label: item.label) {
-                            Offline.shared.downloadBook(id: item.id, label: item.label)
-                        }
                     }
+                    if hasChapters {
+                        Button("Chapters") { showChapters = true }
+                            .buttonStyle(.bordered)
+                    }
+                    DownloadButton(offline: offline, id: item.id, kind: "book", label: item.label) { download() }
                 }
+                .accessibilityHidden(true)
             }
             .sheet(isPresented: $showChapters) {
                 NavigationStack {
                     ChapterList(bookID: item.id, bookTitle: item.label)
+                        .accessibilityAction(.escape) { showChapters = false }
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
                                 Button("Done") { showChapters = false }
@@ -1042,6 +1277,14 @@ struct BookRow: View {
                 }
                 .environmentObject(model)
             }
+        }
+    }
+
+    private func playTogether() { model.playBook(id: item.id, label: item.label, resume: true, together: true) }
+    private func startOver() { model.playBook(id: item.id, label: item.label, resume: false, at: 0) }
+    private func download() {
+        DownloadButton.press(offline, id: item.id, kind: "book", label: item.label) {
+            offline.downloadBook(id: item.id, label: item.label)
         }
     }
 }
@@ -1054,6 +1297,7 @@ struct BookListView: View {
     @State private var items: [BookItem] = []
     @State private var loading = true
     @State private var problem: String?
+    @State private var loadedAt: Date?
 
     var body: some View {
         List {
@@ -1070,7 +1314,8 @@ struct BookListView: View {
         }
         .navigationTitle(title)
         .homeBar()
-        .task { await load() }
+        // once when it opens; back from a deeper list it's only fetched again after 5 minutes (or pull to refresh)
+        .task { if loadedAt.map({ Date().timeIntervalSince($0) > 300 }) ?? true { await load() } }
         .refreshable { await load() }
     }
 
@@ -1079,8 +1324,10 @@ struct BookListView: View {
         do {
             items = try await model.bookList(kind: kind, parent: parent)
             problem = nil
+            loadedAt = Date()
         } catch {
-            problem = error.localizedDescription
+            if !Task.isCancelled { problem = error.localizedDescription }
+            loadedAt = nil
         }
         loading = false
     }
@@ -1227,10 +1474,12 @@ struct BookSearchView: View {
                 Text(note)
             }
             if !items.isEmpty {
-                Section("Found") {
+                Section {
                     ForEach(items) { item in
                         BookRow(item: item)
                     }
+                } header: {
+                    Heading("Found")
                 }
             }
         }
