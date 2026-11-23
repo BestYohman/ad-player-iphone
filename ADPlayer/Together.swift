@@ -582,7 +582,9 @@ final class Together: ObservableObject {
     func decline(_ inv: Invite) {
         declined[inv.id] = Date()
         invites.removeAll { $0.id == inv.id }
+        #if os(iOS)
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["together-" + inv.id])
+        #endif
         if inv.invited == true, let api = api {
             Task { _ = try? await api.post("api/play/together/decline", ["room": inv.id], as: MessageResponse.self) }
         }
@@ -591,6 +593,7 @@ final class Together: ObservableObject {
 
     /// A phone notification while the app is in the background (asked for once, the first time).
     private func notify(_ inv: Invite) {
+        #if os(iOS)
         let c = UNUserNotificationCenter.current()
         c.requestAuthorization(options: [.alert, .sound]) { ok, _ in
             guard ok else { return }
@@ -601,6 +604,7 @@ final class Together: ObservableObject {
             n.userInfo = ["room": inv.id]
             c.add(UNNotificationRequest(identifier: "together-" + inv.id, content: n, trigger: nil))
         }
+        #endif
     }
 
     // MARK: inviting

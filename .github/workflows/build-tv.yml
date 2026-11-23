@@ -1,0 +1,169 @@
+# Builds the Apple TV app on one of GitHub's Macs (you never need a Mac yourself), and on dev also runs it in
+# the Apple TV simulator against a stand-in PC and keeps screenshots in the "tv-screens" branch.
+name: Build the Apple TV app
+
+on:
+  push:
+    branches: [main, dev]      # dev: build and screenshots only, nothing is published
+  workflow_dispatch:
+
+concurrency:
+  group: build-tv-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen 2.44.1
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.44.1/xcodegen.zip
+          echo "a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Make the Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project ADPlayer.xcodeproj -target ADPlayerTV -configuration Release -sdk appletvos \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log && test -f build/Release-appletvos/ADPlayerTV.app/ADPlayerTV
+
+      - name: List the errors (copy these to Claude)
+        if: failure()
+        run: |
+          {
+            echo "## Build errors - copy everything in the box below"
+            echo '```'
+            grep -E "error:" build.log | sed -e "s#$PWD/##" | sort -u | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build log in the ci-log-tv branch
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/cilog" && cd "$RUNNER_TEMP/cilog"
+          git init -q
+          grep -E "error:" "$GITHUB_WORKSPACE/build.log" | sed -e "s#$GITHUB_WORKSPACE/##" | sort -u | head -80 > errors.txt || true
+          tail -c 900000 "$GITHUB_WORKSPACE/build.log" > build.log || true
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Build ${{ github.run_number }} failed"
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/ci-log-tv
+
+      - name: Make ADPlayerTV.ipa
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" build/Release-appletvos/ADPlayerTV.app/Info.plist
+          mkdir -p out/Payload
+          cp -R build/Release-appletvos/ADPlayerTV.app out/Payload/
+          cd out && zip -qr ../ADPlayerTV.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ADPlayerTV
+          path: ADPlayerTV.ipa
+
+      - name: Put it under Releases (this version, and as the Apple TV's latest)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -A40 '^  ADPlayerTV:' project.yml | grep -m1 CFBundleShortVersionString | sed -E 's/.*"([^"]+)".*/\1/')
+          awk -v v="$V" '$0 ~ "^## "v" " {on=1; next} /^## / {if(on) exit} on' CHANGELOG-TV.md > notes.md
+          printf '\nOn the Apple TV: see "Installing on the Apple TV" in README-TV.md.\n' >> notes.md
+          if gh release view "tv-v$V" >/dev/null 2>&1; then
+            AT=$(gh api "repos/$GITHUB_REPOSITORY/commits/tv-v$V" -q .sha 2>/dev/null || true)
+            if [ -n "$AT" ] && [ "$AT" != "$GITHUB_SHA" ]; then echo "::error::Apple TV version $V is already published from another commit. Raise it in project.yml."; exit 1; fi
+            gh release upload "tv-v$V" ADPlayerTV.ipa --clobber
+          else
+            gh release create "tv-v$V" ADPlayerTV.ipa --title "AD Player for Apple TV $V" --notes-file notes.md --target "$GITHUB_SHA" --latest=false
+          fi
+
+  screens:
+    if: github.ref != 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen 2.44.1
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.44.1/xcodegen.zip
+          echo "a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Make the Xcode project
+        run: xcodegen generate
+
+      - name: Start the stand-in PC (test data only)
+        run: |
+          nohup python3 .github/screens/mock.py > mock.log 2>&1 &
+          sleep 2 && curl -fsS http://127.0.0.1:8080/api/play/me
+
+      - name: Find an Apple TV simulator
+        id: sim
+        run: |
+          xcrun simctl list runtimes | grep -i tvos || true
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          for rt, devs in sorted(d.items(), reverse=True):
+              if "tvOS" not in rt: continue
+              for x in devs:
+                  if "4K" in x["name"]: print(x["udid"]); sys.exit()
+          for rt, devs in sorted(d.items(), reverse=True):
+              if "tvOS" in rt and devs: print(devs[0]["udid"]); sys.exit()
+          ')
+          if [ -z "$UDID" ]; then
+            RT=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x["identifier"] for x in json.load(sys.stdin)["runtimes"] if "tvOS" in x["identifier"] and x.get("isAvailable")]; print(r[-1] if r else "")')
+            UDID=$(xcrun simctl create tv com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p "$RT")
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+
+      - name: Run the app and take screenshots
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/tvshots
+          xcodebuild test -project ADPlayer.xcodeproj -scheme ADPlayerTV -configuration Debug \
+            -destination "id=${{ steps.sim.outputs.udid }}" -resultBundlePath tv.xcresult \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log | grep -E "error:|Test Case|TEST|passed|failed" || true
+          ls -la /tmp/tvshots
+
+      - name: List the errors (copy these to Claude)
+        if: always()
+        run: |
+          {
+            echo "## Test log (errors)"
+            echo '```'
+            grep -E "error:|failed" test.log | sed -e "s#$PWD/##" | sort -u | head -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Screenshots from the results, if the test couldn't save them itself
+        if: always()
+        run: |
+          if [ -z "$(ls /tmp/tvshots 2>/dev/null)" ] && [ -d tv.xcresult ]; then
+            xcrun xcresulttool export attachments --path tv.xcresult --output-path /tmp/tvshots || true
+          fi
+          ls /tmp/tvshots || true
+
+      - name: Keep the screenshots in the tv-screens branch
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/shots" && cd "$RUNNER_TEMP/shots"
+          git init -q
+          cp /tmp/tvshots/* . 2>/dev/null || true
+          tail -c 400000 "$GITHUB_WORKSPACE/test.log" > test.log 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/mock.log" . 2>/dev/null || true
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Apple TV screenshots ${{ github.run_number }}"
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/tv-screens
