@@ -442,8 +442,12 @@ struct Invite: Decodable, Identifiable, Hashable {
     let invited: Bool?
     let invitedBy: String?
     let invitedAgo: Int?
+    let tv: Bool?
+    let mine: Bool?
+    let dev: String?
     enum CodingKeys: String, CodingKey {
-        case id, title, by, kind, names, invited
+        case id, title, by, kind, names, invited, tv, dev
+        case mine = "self"
         case invitedBy = "invited_by"
         case invitedAgo = "invited_ago"
     }
@@ -452,6 +456,8 @@ struct Invite: Decodable, Identifiable, Hashable {
     var line: String {
         let w = (kind == "book" ? "listen to " : "watch ") + title
         let others = (names ?? []).filter { $0 != by }
+        if tv == true { return "Your \(dev ?? "TV") is playing \(title). Join to carry on here, in step with it." }
+        if mine == true { return "Take \(title) with you: Join plays it here, in step with the TV." }
         let head = invited == true ? "\(invitedBy ?? by) invites you to \(w) together" : "\(by) is playing \(title) together"
         return head + (others.isEmpty ? "." : " (with \(others.joined(separator: ", "))).")
     }
