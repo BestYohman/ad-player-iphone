@@ -1,0 +1,1 @@
+ADPlayer/AppModel.swift:107:23: error: variable 'self.tvState' used before being initialized

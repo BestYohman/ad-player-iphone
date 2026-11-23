@@ -1,0 +1,168 @@
+Command line invocation:
+    /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/xcodebuild -project ADPlayer.xcodeproj -target ADPlayer -configuration Release -sdk iphoneos SYMROOT=/Users/runner/work/ad-player-iphone/ad-player-iphone/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+
+Build settings from command line:
+    CODE_SIGN_IDENTITY = 
+    CODE_SIGNING_ALLOWED = NO
+    CODE_SIGNING_REQUIRED = NO
+    SDKROOT = iphoneos18.5
+    SYMROOT = /Users/runner/work/ad-player-iphone/ad-player-iphone/build
+
+note: Using codesigning identity override: 
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (1 target)
+    Target 'ADPlayer' in project 'ADPlayer' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ExecuteExternalTool /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Assets.xcassets
+
+ExecuteExternalTool /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+
+ExecuteExternalTool /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+
+ExecuteExternalTool /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+
+Build description signature: b503f495b464d45487a1563048ec9f45
+Build description path: /Users/runner/work/ad-player-iphone/ad-player-iphone/build/XCBuildData/b503f495b464d45487a1563048ec9f45.xcbuilddata
+ClangStatCache /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/com.apple.DeveloperTools/16.4-16F6/Xcode/SDKStatCaches.noindex/iphoneos18.5-22F76-a529daf784b3616c7c04a36aeb7f5c05.sdkstatcache
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer.xcodeproj
+    /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -o /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/com.apple.DeveloperTools/16.4-16F6/Xcode/SDKStatCaches.noindex/iphoneos18.5-22F76-a529daf784b3616c7c04a36aeb7f5c05.sdkstatcache
+
+CreateBuildDirectory /Users/runner/work/ad-player-iphone/ad-player-iphone/build
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer.xcodeproj
+    builtin-create-build-directory /Users/runner/work/ad-player-iphone/ad-player-iphone/build
+
+CreateBuildDirectory /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer.xcodeproj
+    builtin-create-build-directory /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer-8d2cf7ee92aa779264a7582aba86bd78-VFS-iphoneos/all-product-headers.yaml
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer.xcodeproj
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer-8d2cf7ee92aa779264a7582aba86bd78-VFS-iphoneos/all-product-headers.yaml
+
+CreateBuildDirectory /Users/runner/work/ad-player-iphone/ad-player-iphone/build/EagerLinkingTBDs/Release-iphoneos
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer.xcodeproj
+    builtin-create-build-directory /Users/runner/work/ad-player-iphone/ad-player-iphone/build/EagerLinkingTBDs/Release-iphoneos
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer_const_extract_protocols.json (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer_const_extract_protocols.json
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftFileList (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftFileList
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftConstValuesFileList (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftConstValuesFileList
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.LinkFileList (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.LinkFileList
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-OutputFileMap.json (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-OutputFileMap.json
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.hmap
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.DependencyStaticMetadataFileList (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.DependencyStaticMetadataFileList
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.DependencyMetadataFileList (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer.DependencyMetadataFileList
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-project-headers.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-project-headers.hmap
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-own-target-headers.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-own-target-headers.hmap
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-generated-files.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-generated-files.hmap
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-target-headers.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-target-headers.hmap
+
+WriteAuxiliaryFile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-non-framework-target-headers.hmap (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    write-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-non-framework-target-headers.hmap
+
+MkDir /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/ADPlayer.app (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    /bin/mkdir -p /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/ADPlayer.app
+
+MkDir /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_output/unthinned (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    /bin/mkdir -p /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_output/unthinned
+
+MkDir /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_output/thinned (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    /bin/mkdir -p /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_output/thinned
+
+GenerateAssetSymbols /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Assets.xcassets (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/actool /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Assets.xcassets --compile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/ADPlayer.app --output-format human-readable-text --notices --warnings --export-dependency-info /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_dependencies --output-partial-info-plist /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_generated_info.plist --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --development-region en --target-device iphone --minimum-deployment-target 16.0 --platform iphoneos --bundle-identifier com.home.adplayer --generate-swift-asset-symbol-extensions NO --generate-swift-asset-symbols /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.swift --generate-objc-asset-symbols /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.h --generate-asset-symbol-index /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols-Index.plist
+/* com.apple.actool.compilation-results */
+/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols-Index.plist
+/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.h
+/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.swift
+
+
+CompileAssetCatalogVariant thinned /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/ADPlayer.app /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Assets.xcassets (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    /Applications/Xcode_16.4.app/Contents/Developer/usr/bin/actool /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Assets.xcassets --compile /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_output/thinned --output-format human-readable-text --notices --warnings --export-dependency-info /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_dependencies_thinned --output-partial-info-plist /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/assetcatalog_generated_info.plist_thinned --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --development-region en --target-device iphone --minimum-deployment-target 16.0 --platform iphoneos
+
+SwiftDriver ADPlayer normal arm64 com.apple.xcode.tools.swift.compiler (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    builtin-SwiftDriver -- /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name ADPlayer -O -whole-module-optimization -enforce-exclusivity\=checked @/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftFileList -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -target arm64-apple-ios16.0 -g -Xfrontend -serialize-debugging-options -swift-version 5 -I /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -F /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -c -num-threads 3 -Xcc -ivfsstatcache -Xcc /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/com.apple.DeveloperTools/16.4-16F6/Xcode/SDKStatCaches.noindex/iphoneos18.5-22F76-a529daf784b3616c7c04a36aeb7f5c05.sdkstatcache -output-file-map /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.swiftmodule -validate-clang-modules-once -clang-build-session-file /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/org.llvm.clang/ModuleCache.noindex/Session.modulevalidation -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer_const_extract_protocols.json -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-generated-files.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-own-target-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-project-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/include -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources -emit-objc-header -emit-objc-header-path /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-Swift.h -working-directory /Users/runner/work/ad-player-iphone/ad-player-iphone -no-emit-module-separately-wmo
+
+SwiftCompile normal arm64 Compiling\ ADPlayerApp.swift,\ API.swift,\ AppModel.swift,\ BookPlayer.swift,\ Keychain.swift,\ Offline.swift,\ PhonePlayer.swift,\ Shortcuts.swift,\ Sound.swift,\ Together.swift,\ Views.swift,\ Watch.swift,\ GeneratedAssetSymbols.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/ADPlayerApp.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/API.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/AppModel.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/BookPlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Keychain.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Offline.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/PhonePlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Shortcuts.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Sound.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Together.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Views.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Watch.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.swift (in target 'ADPlayer' from project 'ADPlayer')
+Failed frontend command:
+/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/ADPlayerApp.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/API.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/AppModel.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/BookPlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Keychain.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Offline.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/PhonePlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Shortcuts.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Sound.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Together.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Views.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Watch.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.swift -supplementary-output-file-map /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/supplementaryOutputs-1 -target arm64-apple-ios16.0 -Xllvm -aarch64-use-tbi -enable-objc-interop -stack-check -sdk /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -I /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -F /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -no-color-diagnostics -g -debug-info-format\=dwarf -dwarf-version\=4 -swift-version 5 -enforce-exclusivity\=checked -O -serialize-debugging-options -const-gather-protocols-file /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer_const_extract_protocols.json -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -empty-abi-descriptor -validate-clang-modules-once -clang-build-session-file /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/org.llvm.clang/ModuleCache.noindex/Session.modulevalidation -Xcc -working-directory -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone -resource-dir /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift -file-compilation-dir /Users/runner/work/ad-player-iphone/ad-player-iphone -Xcc -ivfsstatcache -Xcc /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/com.apple.DeveloperTools/16.4-16F6/Xcode/SDKStatCaches.noindex/iphoneos18.5-22F76-a529daf784b3616c7c04a36aeb7f5c05.sdkstatcache -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/swift-overrides.hmap -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-generated-files.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-own-target-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-project-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/include -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources -module-name ADPlayer -frontend-parseable-output -disable-clang-spi -target-sdk-version 18.5 -target-sdk-name iphoneos18.5 -external-plugin-path /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins\#/Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server -external-plugin-path /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/local/lib/swift/host/plugins\#/Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server -in-process-plugin-server-path /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/libSwiftInProcPluginServer.dylib -plugin-path /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins -plugin-path /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/local/lib/swift/host/plugins -enable-default-cmo -num-threads 3 -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayerApp.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/API.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/AppModel.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/BookPlayer.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Keychain.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Offline.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/PhonePlayer.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Shortcuts.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Sound.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Together.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Views.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Watch.o -o /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/GeneratedAssetSymbols.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayerApp.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/API.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/AppModel.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/BookPlayer.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Keychain.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Offline.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/PhonePlayer.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Shortcuts.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Sound.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Together.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Views.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/Watch.o -index-unit-output-path /ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/GeneratedAssetSymbols.o
+
+CompileSwift normal arm64 (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    
+/Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/AppModel.swift:999:81: warning: 'appWasSuspended' was deprecated in iOS 16.0: wasSuspended reason no longer present
+            Task { @MainActor in self?.interruption(type, suspended: reason == .appWasSuspended, resume: resume) }
+                                                                                ^
+/Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/AppModel.swift:107:23: error: variable 'self.tvState' used before being initialized
+        video.model = self
+                      ^
+
+SwiftDriver\ Compilation ADPlayer normal arm64 com.apple.xcode.tools.swift.compiler (in target 'ADPlayer' from project 'ADPlayer')
+    cd /Users/runner/work/ad-player-iphone/ad-player-iphone
+    builtin-Swift-Compilation -- /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name ADPlayer -O -whole-module-optimization -enforce-exclusivity\=checked @/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.SwiftFileList -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -target arm64-apple-ios16.0 -g -Xfrontend -serialize-debugging-options -swift-version 5 -I /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -F /Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos -c -num-threads 3 -Xcc -ivfsstatcache -Xcc /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/com.apple.DeveloperTools/16.4-16F6/Xcode/SDKStatCaches.noindex/iphoneos18.5-22F76-a529daf784b3616c7c04a36aeb7f5c05.sdkstatcache -output-file-map /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer.swiftmodule -validate-clang-modules-once -clang-build-session-file /var/folders/9d/l02zfgrs7c16twd3wbpdmhkc0000gn/C/org.llvm.clang/ModuleCache.noindex/Session.modulevalidation -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer_const_extract_protocols.json -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-generated-files.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-own-target-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/ADPlayer-project-headers.hmap -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/Release-iphoneos/include -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources -emit-objc-header -emit-objc-header-path /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/Objects-normal/arm64/ADPlayer-Swift.h -working-directory /Users/runner/work/ad-player-iphone/ad-player-iphone -no-emit-module-separately-wmo
+
+** BUILD FAILED **
+
+
+The following build commands failed:
+	SwiftCompile normal arm64 Compiling\ ADPlayerApp.swift,\ API.swift,\ AppModel.swift,\ BookPlayer.swift,\ Keychain.swift,\ Offline.swift,\ PhonePlayer.swift,\ Shortcuts.swift,\ Sound.swift,\ Together.swift,\ Views.swift,\ Watch.swift,\ GeneratedAssetSymbols.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/ADPlayerApp.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/API.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/AppModel.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/BookPlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Keychain.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Offline.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/PhonePlayer.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Shortcuts.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Sound.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Together.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Views.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/ADPlayer/Watch.swift /Users/runner/work/ad-player-iphone/ad-player-iphone/build/ADPlayer.build/Release-iphoneos/ADPlayer.build/DerivedSources/GeneratedAssetSymbols.swift (in target 'ADPlayer' from project 'ADPlayer')
+	CompileSwift normal arm64 (in target 'ADPlayer' from project 'ADPlayer')
+(2 failures)
