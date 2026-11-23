@@ -50,7 +50,8 @@ final class TVShots: XCTestCase {
         press(.up, 3)                           // the tabs at the top
         press(.right)
         shot("11_shows", wait: 6)
-        press(.down, 2)                         // past the audio description button, to the first poster
+        press(.down, 2)                         // past the audio description button, to the posters
+        press(.left, 2)                         // the first poster (the stand-in show with seasons)
         shot("12_shows_focus")
         press(.select)
         shot("13_series", wait: 6)
