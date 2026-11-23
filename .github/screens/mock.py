@@ -11,6 +11,7 @@ def it(id, type, name, **k):
     d = {"id": id, "type": type, "name": name, "label": k.pop("label", name), "length": "", "played": False, "resume": "",
          "resume_ticks": 0, "has_ad": True, "pct": 0, "overview": "", "year": "", "rating": "", "score": "", "genres": ""}
     d.update(k)
+    if d["resume"] and not d["resume_ticks"]: d["resume_ticks"] = 5_400_000_000      # so Resume shows (the apps check both)
     return d
 
 LOREM = ("Eleven teams race around the world, solving clues and doing tasks in every city they reach. The last team to "

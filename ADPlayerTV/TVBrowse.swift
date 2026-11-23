@@ -158,7 +158,7 @@ struct TVHero: View {
                 if nz(card.seriesName) != nil { Text(card.label).font(sz.f(30, .semibold)).lineLimit(2) }
                 if let r = nz(card.resume) { Text("Resumes at \(r)").font(sz.f(28)).foregroundStyle(look.sub) }
                 NavigationLink { TVDetail(id: card.id, title: card.label) } label: {
-                    Text("More info").font(sz.f(30, .semibold)).padding(.horizontal, 20)
+                    Text("More info").font(sz.f(30, .semibold)).padding(.horizontal, 20).tvLabel(look)
                 }
                 .padding(.top, 8)
             }
@@ -201,9 +201,9 @@ struct TVGrid: View {
                 HStack(spacing: 40) {
                     Text("\(title) (\(cards.count))").font(sz.f(52, .heavy)).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button(withAD ? "With audio description only" : "Everything") { withAD.toggle(); Task { await load() } }
-                        .accessibilityLabel("With audio description only")
-                        .accessibilityValue(withAD ? "on" : "off")
+                    Button { withAD.toggle(); Task { await load() } } label: {
+                        Text("Audio description only: \(withAD ? "on" : "off")").font(sz.f(28, .semibold)).tvLabel(look)
+                    }
                 }
                 .padding(.horizontal, 80)
                 .focusSection()
@@ -323,23 +323,24 @@ struct TVDetail: View {
     }
 
     @ViewBuilder private var buttons: some View {
+        let look = Look.of(model)
         let sz = TVSize(model)
         HStack(spacing: 30) {
             if let it = item, it.type == "Episode" || it.type == "Movie" {
                 Button { model.video.start(it, resume: it.canResume) } label: {
-                    Label(it.canResume ? "Resume from \(it.resume ?? "")" : "Play", systemImage: "play.fill").font(sz.f(30, .semibold))
+                    Label(it.canResume ? "Resume from \(it.resume ?? "")" : "Play", systemImage: "play.fill").font(sz.f(30, .semibold)).tvLabel(look)
                 }
                 if it.canResume {
-                    Button { model.video.start(it, resume: false) } label: { Text("Start over").font(sz.f(30, .semibold)) }
+                    Button { model.video.start(it, resume: false) } label: { Text("Start over").font(sz.f(30, .semibold)).tvLabel(look) }
                 }
             } else if let n = nextUp {
                 Button { model.video.start(n, resume: n.canResume) } label: {
-                    Label((n.canResume ? "Resume " : "Play ") + n.label, systemImage: "play.fill").font(sz.f(30, .semibold)).lineLimit(1)
+                    Label((n.canResume ? "Resume " : "Play ") + n.label, systemImage: "play.fill").font(sz.f(30, .semibold)).lineLimit(1).tvLabel(look)
                 }
             }
             if item?.type == "Episode", let sid = info["series_id"] as? String, !sid.isEmpty {
                 NavigationLink { TVDetail(id: sid, title: info["series_name"] as? String ?? "") } label: {
-                    Text("Go to \((info["series_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "the show")").font(sz.f(30, .semibold))
+                    Text("Go to \((info["series_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "the show")").font(sz.f(30, .semibold)).tvLabel(look)
                 }
             }
         }
@@ -354,7 +355,7 @@ struct TVDetail: View {
             HStack(spacing: 24) {
                 ForEach(seasons) { s in
                     Button { season = s.id; Task { await loadEpisodes() } } label: {
-                        Text(s.label).font(sz.f(28, season == s.id ? .heavy : .medium))
+                        Text(s.label).font(sz.f(28, season == s.id ? .heavy : .medium)).tvLabel(look)
                     }
                     .accessibilityAddTraits(season == s.id ? .isSelected : [])
                 }

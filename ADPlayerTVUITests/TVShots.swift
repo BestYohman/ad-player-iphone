@@ -50,18 +50,21 @@ final class TVShots: XCTestCase {
         press(.up, 3)                           // the tabs at the top
         press(.right)
         shot("11_shows", wait: 6)
-        press(.down)
+        press(.down, 2)                         // past the audio description button, to the first poster
         shot("12_shows_focus")
         press(.select)
         shot("13_series", wait: 6)
-        press(.down, 3)
-        shot("14_series_seasons", wait: 2)
         press(.down)
-        shot("15_series_episodes", wait: 3)
-        press(.menu)
-        press(.menu)
+        shot("14_series_down", wait: 2)
+        press(.down)
+        shot("15_series_seasons", wait: 2)
+        press(.down)
+        shot("16_series_episodes", wait: 3)
+        press(.menu)                            // back to Shows
         press(.up, 3)
         press(.right, 3)                        // You
-        shot("16_you", wait: 4)
+        shot("17_you", wait: 4)
+        press(.down)
+        shot("18_you_focus", wait: 2)
     }
 }

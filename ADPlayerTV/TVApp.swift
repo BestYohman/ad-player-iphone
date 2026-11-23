@@ -35,6 +35,17 @@ struct TVSize {
     func f(_ s: CGFloat, _ w: Font.Weight = .regular) -> Font { .system(size: s * k, weight: w) }
 }
 
+/// A button's words: dark on the white the focused button turns, the page's colour otherwise.
+struct TVLabelColor: ViewModifier {
+    @Environment(\.isFocused) private var focused
+    let look: Look
+    func body(content: Content) -> some View { content.foregroundStyle(focused ? Color.black : look.fg) }
+}
+
+extension View {
+    func tvLabel(_ look: Look) -> some View { modifier(TVLabelColor(look: look)) }
+}
+
 struct TVRoot: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.scenePhase) private var phase
@@ -212,6 +223,7 @@ struct TVSightPage: View {
                         }
                         .padding(26)
                         .frame(maxWidth: 1200, alignment: .leading)
+                        .tvLabel(look)
                     }
                     .accessibilityAddTraits(on && !first ? .isSelected : [])
                 }
@@ -230,6 +242,7 @@ struct TVLowOptions: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
+        let look = Look.of(model)
         let sz = TVSize(model)
         let sizes = [("normal", "Normal"), ("large", "Large"), ("larger", "Larger"), ("largest", "Largest")]
         let screens = [("dark", "Dark"), ("light", "Light"), ("yellow", "Yellow on black")]
@@ -240,16 +253,16 @@ struct TVLowOptions: View {
                 let i = (sizes.firstIndex { $0.0 == size } ?? 1) + 1
                 let n = sizes[i % sizes.count]
                 model.sightSave(["size": n.0], said: "Text size: \(n.1).")
-            } label: { Text("Text size: \(sizes.first { $0.0 == size }?.1 ?? "Large")").font(sz.f(32, .semibold)) }
+            } label: { Text("Text size: \(sizes.first { $0.0 == size }?.1 ?? "Large")").font(sz.f(32, .semibold)).tvLabel(look) }
             Button {
                 let i = (screens.firstIndex { $0.0 == screen } ?? 0) + 1
                 let n = screens[i % screens.count]
                 model.sightSave(["screen": n.0], said: "Screen: \(n.1).")
-            } label: { Text("Screen: \(screens.first { $0.0 == screen }?.1 ?? "Dark")").font(sz.f(32, .semibold)) }
+            } label: { Text("Screen: \(screens.first { $0.0 == screen }?.1 ?? "Dark")").font(sz.f(32, .semibold)).tvLabel(look) }
             Button {
                 let on = model.opts.posters != false
                 model.sightSave(["posters": on ? "0" : "1"], said: "Posters: \(on ? "off" : "on").")
-            } label: { Text("Posters and pictures: \(model.opts.posters != false ? "on" : "off")").font(sz.f(32, .semibold)) }
+            } label: { Text("Posters and pictures: \(model.opts.posters != false ? "on" : "off")").font(sz.f(32, .semibold)).tvLabel(look) }
         }
     }
 }
@@ -292,12 +305,12 @@ struct TVYou: View {
                 Text("Signed in as \(model.me?.name ?? "")").font(sz.f(32))
                 Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through \(model.server).").font(sz.f(28)).foregroundStyle(look.sub)
                 HStack(spacing: 30) {
-                    Button("Sign out") { model.signOut() }
-                    Button("Change the address of the PC") { showSetup = true }
+                    Button { model.signOut() } label: { Text("Sign out").font(sz.f(30, .semibold)).tvLabel(look) }
+                    Button { showSetup = true } label: { Text("Change the address of the PC").font(sz.f(30, .semibold)).tvLabel(look) }
                 }
                 if model.sightKnown {
                     NavigationLink { TVSightPage(first: false) } label: {
-                        Text("How you see the screen: \(model.sight == "low" ? "Low vision" : "Full vision")").font(sz.f(32, .semibold))
+                        Text("How you see the screen: \(model.sight == "low" ? "Low vision" : "Full vision")").font(sz.f(32, .semibold)).tvLabel(look)
                     }
                 }
                 Text("AD Player for Apple TV \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
