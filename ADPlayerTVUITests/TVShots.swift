@@ -63,7 +63,7 @@ final class TVShots: XCTestCase {
         shot("16_series_episodes", wait: 3)
         press(.menu)                            // back to Shows
         press(.up, 3)
-        press(.right, 3)                        // You
+        press(.right, 3)                        // Settings
         shot("17_you", wait: 4)
         press(.down)
         shot("18_you_focus", wait: 2)

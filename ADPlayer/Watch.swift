@@ -41,7 +41,7 @@ struct SightChooser: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("How do you see the screen?").font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                Text("Press the one that fits you. Everything works with VoiceOver either way. You can change this any time under You.")
+                Text("Press the one that fits you. Everything works with VoiceOver either way. You can change this any time under Settings.")
                     .foregroundStyle(.secondary)
                 SightChoices(current: "")
             }
@@ -72,7 +72,7 @@ struct WatchRoot: View {
             NavigationStack { BooksTab() }
                 .tabItem { Label("Books", systemImage: "headphones") }.tag("books")
             NavigationStack { YouPage() }
-                .tabItem { Label("You", systemImage: "person.crop.circle") }.tag("you")
+                .tabItem { Label("Settings", systemImage: "gearshape") }.tag("you")
         }
         .tint(look.accent)
         .modifier(LowSize(size: model.low ? Look.typeSize(model) : nil))
@@ -330,7 +330,7 @@ struct DetailPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if model.opts.posters != false || !look.low {
-                    AsyncImage(url: model.api?.media(nz(info["backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop")) { img in
+                    AsyncImage(url: model.api?.media(bigPicture)) { img in
                         img.resizable().scaledToFill()
                     } placeholder: { look.card }
                     .frame(height: 220).clipped()
@@ -397,6 +397,12 @@ struct DetailPage: View {
         .navigationTitle("")          // the names are on the page itself (not again at the top)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    /// The big picture: an episode's own picture from the episode; a show's or movie's background.
+    private var bigPicture: String {
+        if item?.type == "Episode" { return nz(info["thumb"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Primary" }
+        return nz(info["backdrop"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop"
     }
 
     private var metaLine: String {
@@ -507,7 +513,7 @@ struct YouPage: View {
                 NavigationLink("Settings") { SetupView(first: false) }
             }
         }
-        .navigationTitle("You")
+        .navigationTitle("Settings")
     }
 }
 

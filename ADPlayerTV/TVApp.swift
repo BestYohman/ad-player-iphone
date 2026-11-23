@@ -206,7 +206,7 @@ struct TVSightPage: View {
             VStack(alignment: .leading, spacing: 26) {
                 Text("How do you see the screen?").font(sz.f(60, .heavy)).accessibilityAddTraits(.isHeader)
                 if first {
-                    Text("Pick the one that fits you. You can change it any time under You.").font(sz.f(32)).foregroundStyle(look.sub)
+                    Text("Pick the one that fits you. You can change it any time under Settings.").font(sz.f(32)).foregroundStyle(look.sub)
                 }
                 ForEach(Array(SIGHTS.filter { $0.0 != "none" }.reversed()), id: \.0) { s in
                     let on = model.sight == s.0 || (s.0 == "full" && model.sight == "none")
@@ -281,7 +281,7 @@ struct TVMain: View {
             NavigationStack { TVGrid(kind: "shows", title: "TV shows") }.tabItem { Text("Shows") }.tag("shows")
             NavigationStack { TVGrid(kind: "movies", title: "Movies") }.tabItem { Text("Movies") }.tag("movies")
             NavigationStack { TVSearch() }.tabItem { Image(systemName: "magnifyingglass").accessibilityLabel("Search") }.tag("search")
-            NavigationStack { TVYou() }.tabItem { Text("You") }.tag("you")
+            NavigationStack { TVYou() }.tabItem { Label("Settings", systemImage: "gearshape") }.tag("you")
         }
         .tint(look.accent)
         .fullScreenCover(isPresented: $video.shown) {
@@ -301,7 +301,7 @@ struct TVYou: View {
         let sz = TVSize(model)
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                Text("You").font(sz.f(60, .heavy)).accessibilityAddTraits(.isHeader)
+                Text("Settings").font(sz.f(60, .heavy)).accessibilityAddTraits(.isHeader)
                 Text("Signed in as \(model.me?.name ?? "")").font(sz.f(32))
                 Text(model.atHome ? "Connected at home, straight to the PC." : "Connected through \(model.server).").font(sz.f(28)).foregroundStyle(look.sub)
                 HStack(spacing: 30) {

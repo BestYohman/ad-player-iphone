@@ -288,7 +288,8 @@ struct TVDetail: View {
         let se = info["se"] as? Int
         let ep = info["ep"] as? Int
         ZStack(alignment: .topLeading) {
-            TVPic(path: nz(info["backdrop"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop")
+            TVPic(path: isEp ? (nz(info["thumb"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Primary")
+                          : (nz(info["backdrop"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
                 .overlay(TVFade(look: look))
                 .ignoresSafeArea()
