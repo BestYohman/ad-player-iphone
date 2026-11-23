@@ -18,9 +18,16 @@ final class AppModel: ObservableObject {
     @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
     @Published var devices: [Device] = []
     @Published var otherDevices: [String] = []
+    @Published var pairing: Device?
+    @Published var pairCode = ""
     @Published var target: String = AppModel.phoneID {
         didSet {
             guard oldValue != target else { return }
+            if !restoring, let d = devices.first(where: { $0.id == target }), d.pair == true {
+                restoring = true; target = oldValue; restoring = false        // an Apple TV that has to be paired first
+                pairStart(d); return
+            }
+            if !restoring { AppModel.noteUsed(target) }
             if !restoring { UserDefaults.standard.set(nameOf(target), forKey: "targetName") }
             tvStatus = nil
             tvMisses = 0
@@ -336,6 +343,49 @@ final class AppModel: ObservableObject {
         await loadContinue()
         await loadContinueBooks()
         await refreshStatus()
+    }
+
+    /// Play on: the TVs and this phone, the ones used last first.
+    var playOnList: [(String, String)] {
+        let used = UserDefaults.standard.dictionary(forKey: "devUsed") as? [String: Double] ?? [:]
+        var all = devices.map { ($0.id, $0.name + ($0.pair == true ? " - pair it first" : ""), max(($0.last ?? 0), used[$0.id] ?? 0)) }
+        all.append((AppModel.phoneID, AppModel.phoneName, used[AppModel.phoneID] ?? 0))
+        return all.enumerated().sorted { a, b in a.element.2 != b.element.2 ? a.element.2 > b.element.2 : a.offset < b.offset }
+            .map { ($0.element.0, $0.element.1) }
+    }
+
+    static func noteUsed(_ id: String) {
+        var used = UserDefaults.standard.dictionary(forKey: "devUsed") as? [String: Double] ?? [:]
+        used[id] = Date().timeIntervalSince1970
+        UserDefaults.standard.set(used, forKey: "devUsed")
+    }
+
+    /// An Apple TV is paired with the PC once: the TV shows a code, she types it in.
+    func pairStart(_ d: Device) {
+        guard let api = api else { return }
+        say("Asking \(AppModel.baseName(d.name)) for a code.")
+        Task {
+            do {
+                let r = try await api.post("api/play/pair", ["device": d.id], as: MessageResponse.self)
+                self.say(r.message)
+                self.pairCode = ""
+                self.pairing = d
+            } catch { self.say(error.localizedDescription) }
+        }
+    }
+
+    func pairFinish() {
+        guard let d = pairing, let api = api else { return }
+        pairing = nil
+        let code = pairCode
+        Task {
+            do {
+                let r = try await api.post("api/play/pair", ["device": d.id, "pin": code], as: MessageResponse.self)
+                self.say(r.message)
+                await self.refreshDevices(announce: false)
+                if let n = self.devices.first(where: { $0.id == d.id }), n.pair != true { self.target = n.id }
+            } catch { self.say(error.localizedDescription) }
+        }
     }
 
     func refreshDevices(announce: Bool) async {
@@ -766,9 +816,17 @@ final class AppModel: ObservableObject {
     func scene(active: Bool) {
         pollTask?.cancel()
         pollTask = nil
+        together.inBackground = !active
         guard active else {
             phone.saveNow()
             book.saveNow()
+            pollTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    guard let self = self else { return }
+                    if !self.needSignIn && !self.together.active { await self.together.pollInvites() }
+                }
+            }
             return
         }
         Offline.shared.resume()

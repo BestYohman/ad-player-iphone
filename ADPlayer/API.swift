@@ -362,14 +362,37 @@ struct Room: Decodable, Equatable {
     let gone: Bool?
     let left: Bool?
     let jseq: Int?
+    /// (PC 2.44.0) one line saying what's going on, what each phone is doing, and what happened lately
+    let status: String?
+    let pausedBy: String?
+    let people: [TogetherPerson]?
+    let events: [TogetherEvent]?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, item, title, iseq, run, want, waiting, hold, pos, rate, runtime, by, role, msg, others, gone, left, jseq
+        case status, people, events
+        case pausedBy = "paused_by"
         case hasNext = "has_next"
         case msgBy = "msg_by"
         case msgSeq = "msg_seq"
         case notReady = "not_ready"
     }
+}
+
+struct TogetherPerson: Decodable, Equatable, Hashable {
+    let name: String
+    let state: String?
+    let stateText: String?
+    let me: Bool?
+    enum CodingKeys: String, CodingKey {
+        case name, state, me
+        case stateText = "state_text"
+    }
+}
+
+struct TogetherEvent: Decodable, Equatable, Hashable {
+    let ago: Int?
+    let text: String
 }
 
 struct Invite: Decodable, Identifiable, Hashable {
@@ -378,6 +401,32 @@ struct Invite: Decodable, Identifiable, Hashable {
     let by: String
     let kind: String
     let names: [String]?
+    let invited: Bool?
+    let invitedBy: String?
+    enum CodingKeys: String, CodingKey {
+        case id, title, by, kind, names, invited
+        case invitedBy = "invited_by"
+    }
+
+    /// "Ann invites you to watch … together (with Bob)." or "Ann is playing … together."
+    var line: String {
+        let w = (kind == "book" ? "listen to " : "watch ") + title
+        let others = (names ?? []).filter { $0 != by }
+        let head = invited == true ? "\(invitedBy ?? by) invites you to \(w) together" : "\(by) is playing \(title) together"
+        return head + (others.isEmpty ? "." : " (with \(others.joined(separator: ", "))).")
+    }
+}
+
+/// Someone who can be invited to play together (only people who can sign in to the player).
+struct Person: Decodable, Identifiable, Hashable {
+    let name: String
+    let online: Bool?
+    let notify: Bool?
+    var id: String { name }
+}
+
+struct PeopleResponse: Decodable {
+    let people: [Person]
 }
 
 struct InvitesResponse: Decodable {
@@ -389,6 +438,9 @@ struct Device: Decodable, Identifiable, Hashable {
     let name: String
     let user: String?
     let playing: String?
+    /// (PC 2.44.0) when this person last played on it (seconds), and an Apple TV that has to be paired first
+    let last: Double?
+    let pair: Bool?
 }
 
 struct DevicesResponse: Decodable {

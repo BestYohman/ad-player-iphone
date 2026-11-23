@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UserNotifications
 
 /// Playing together: one person starts a show, movie or audiobook with "Play together" on, and the other
 /// gets a Join button. Every second this phone tells the PC where it is; the PC keeps the one clock both
@@ -12,6 +13,10 @@ final class Together: ObservableObject {
     }
     @Published private(set) var room: Room?
     @Published private(set) var invites: [Invite] = []
+    /// The people she can invite (the picker is open while this isn't nil).
+    @Published var inviting: [Person]?
+    private var declined = Set<String>()
+    var inBackground = false
 
     weak var model: AppModel?
 
@@ -65,9 +70,10 @@ final class Together: ObservableObject {
             do {
                 let r = try await api.post("api/play/together/start",
                                            ["cid": cid, "kind": "video", "item": item.id, "pos": String(format: "%.1f", pos),
-                                            "mode": "audio", "title": item.label], as: Room.self)
+                                            "mode": "audio", "title": item.label, "invite": ""], as: Room.self)
                 self.begin(r)
-                self.say("Ready to play \(r.title ?? item.label) together. When the other person presses Join it starts by itself - or press Play to start now.")
+                self.say("Ready to play \(r.title ?? item.label) together. Choose who to invite. When they join it starts by itself - or press Play to start now.")
+                await self.inviteOpen(first: true)
             } catch {
                 self.say(error.localizedDescription)
             }
@@ -86,9 +92,10 @@ final class Together: ObservableObject {
                 if b.duration > 0 && pos >= b.duration - 2 { pos = 0 }
                 let r = try await api.post("api/play/together/start",
                                            ["cid": cid, "kind": "book", "item": id, "pos": String(format: "%.1f", pos),
-                                            "mode": "audio", "title": b.title], as: Room.self)
+                                            "mode": "audio", "title": b.title, "invite": ""], as: Room.self)
                 self.begin(r)
-                self.say("Ready to listen to \(r.title ?? label) together. When the other person presses Join it starts by itself - or press Play to start now.")
+                self.say("Ready to listen to \(r.title ?? label) together. Choose who to invite. When they join it starts by itself - or press Play to start now.")
+                await self.inviteOpen(first: true)
             } catch {
                 self.say(error.localizedDescription)
             }
@@ -532,6 +539,7 @@ final class Together: ObservableObject {
         } else {
             state = (r.want ?? false) ? "Playing." : "Paused."
         }
+        if ready && !held, let st = r.status, !st.isEmpty { state = st }
         let pos = ready ? mediaTime : (r.pos ?? 0)
         var text = (others.isEmpty ? "Playing together" : "Together with \(names)") + ": \(r.title ?? ""). \(state) \(Speak.position(pos))"
         if let rt = r.runtime, rt > 0 { text += " of \(Speak.duration(rt))" }
@@ -553,11 +561,72 @@ final class Together: ObservableObject {
         guard !active, let api = api, model?.needSignIn == false else { invites = []; return }
         guard let r = try? await api.get("api/play/together/list", ["cid": cid], as: InvitesResponse.self) else { return }
         guard !active else { return }
-        invites = r.rooms
-        for inv in r.rooms where !seenInvites.contains(inv.id) {
+        invites = r.rooms.filter { !declined.contains($0.id) }
+        for inv in invites where !seenInvites.contains(inv.id) {
             seenInvites.insert(inv.id)
-            let what = (inv.kind == "book" ? "listen to " : "play ") + inv.title
-            say("\(inv.by) wants to \(what) together. The Join button is at the top.")
+            if inBackground {
+                if inv.invited == true { notify(inv) }
+            } else {
+                say(inv.line + " The Join button is at the top.")
+            }
+        }
+    }
+
+    /// Not now: the invitation goes away here, and the one who invited sees "said not now".
+    func decline(_ inv: Invite) {
+        declined.insert(inv.id)
+        invites.removeAll { $0.id == inv.id }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["together-" + inv.id])
+        if inv.invited == true, let api = api {
+            Task { _ = try? await api.post("api/play/together/decline", ["room": inv.id], as: MessageResponse.self) }
+        }
+        say("Okay.")
+    }
+
+    /// A phone notification while the app is in the background (asked for once, the first time).
+    private func notify(_ inv: Invite) {
+        let c = UNUserNotificationCenter.current()
+        c.requestAuthorization(options: [.alert, .sound]) { ok, _ in
+            guard ok else { return }
+            let n = UNMutableNotificationContent()
+            n.title = "Play together"
+            n.body = inv.line
+            n.sound = .default
+            n.userInfo = ["room": inv.id]
+            c.add(UNNotificationRequest(identifier: "together-" + inv.id, content: n, trigger: nil))
+        }
+    }
+
+    // MARK: inviting
+
+    /// Only people who can sign in to the player; the ones already playing or invited aren't offered again.
+    func inviteOpen(first: Bool = false) async {
+        guard active, let api = api else { return }
+        guard let r = try? await api.get("api/play/people", as: PeopleResponse.self) else {
+            if !first { say("Couldn't reach the app.") }
+            return
+        }
+        let have = Set((room?.people ?? []).map { $0.name })
+        let avail = r.people.filter { !have.contains($0.name) }
+        if avail.isEmpty {
+            if !first { say(r.people.isEmpty ? "Nobody else can sign in to the player." : "Everyone is already invited or playing.") }
+            return
+        }
+        if active { inviting = avail }
+    }
+
+    func inviteSend(_ names: [String]) {
+        inviting = nil
+        guard active, !names.isEmpty, let api = api else { return }
+        let rid = roomID
+        Task {
+            do {
+                let r = try await api.post("api/play/together/invite", ["cid": cid, "room": rid, "names": names.joined(separator: ",")],
+                                           as: MessageResponse.self)
+                self.say(r.message)
+            } catch {
+                self.say(error.localizedDescription)
+            }
         }
     }
 }

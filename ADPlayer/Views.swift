@@ -269,14 +269,20 @@ struct HomeView: View {
 
                 Section {
                     Picker("Play on", selection: $model.target) {
-                        Text(AppModel.phoneName).tag(AppModel.phoneID)
-                        ForEach(model.devices) { device in
-                            Text(device.name).tag(device.id)
+                        ForEach(model.playOnList, id: \.0) { d in
+                            Text(d.1).tag(d.0)
                         }
                     }
                     .pickerStyle(.navigationLink)
                     Button("Refresh the TV list") {
                         Task { await model.refreshDevices(announce: true) }
+                    }
+                    .alert("Pair \(model.pairing?.name ?? "the Apple TV")", isPresented: Binding(get: { model.pairing != nil }, set: { if !$0 { model.pairing = nil } })) {
+                        TextField("Code", text: $model.pairCode).keyboardType(.numberPad)
+                        Button("Pair") { model.pairFinish() }
+                        Button("Cancel", role: .cancel) { model.pairing = nil }
+                    } message: {
+                        Text("Type the code the TV shows.")
                     }
                     Picker("Play", selection: Binding(get: { shown }, set: { what = $0; query = "" })) {
                         ForEach(kinds, id: \.0) { k in Text(k.1).tag(k.0) }
@@ -452,8 +458,10 @@ struct InvitesSection: View {
         if !together.active && !together.invites.isEmpty {
             Section {
                 ForEach(together.invites) { inv in
+                    Text(inv.line)
                     Button("Join \(inv.by): \(inv.title)") { together.join(inv) }
-                        .accessibilityHint("\(inv.by) wants to \(inv.kind == "book" ? "listen to" : "play") it together.")
+                    Button("Not now") { together.decline(inv) }
+                        .accessibilityLabel("Not now: \(inv.by), \(inv.title)")
                 }
             } header: {
                 Heading("Play together")
@@ -1145,6 +1153,21 @@ struct TogetherControls: View {
 
     var body: some View {
         Section {
+            // who's in it, and what each phone is doing
+            ForEach(together.room?.people ?? [], id: \.name) { p in
+                Text("\(p.me == true ? "You" : p.name): \(p.stateText ?? p.state ?? "")")
+            }
+            Button("Invite people") { Task { await together.inviteOpen() } }
+            if let ev = together.room?.events, !ev.isEmpty {
+                NavigationLink("What happened") { TogetherEvents(together: together) }
+            }
+        } header: {
+            Heading("Playing together")
+        }
+        .sheet(isPresented: Binding(get: { together.inviting != nil }, set: { if !$0 { together.inviting = nil } })) {
+            InvitePicker(together: together)
+        }
+        Section {
             // swipe up or down: forward or back 30 seconds, for everyone
             Text(together.statusText)
                 .accessibilityAddTraits(.updatesFrequently)
@@ -1193,6 +1216,56 @@ struct TogetherControls: View {
                 }
             } header: {
                 Heading("Listening")
+            }
+        }
+    }
+}
+
+/// What happened while playing together, newest first.
+struct TogetherEvents: View {
+    @ObservedObject var together: Together
+    var body: some View {
+        List {
+            ForEach(Array((together.room?.events ?? []).reversed().enumerated()), id: \.offset) { _, e in
+                Text(e.text + " (" + TogetherEvents.ago(e.ago ?? 0) + ")")
+            }
+        }
+        .navigationTitle("What happened")
+    }
+    static func ago(_ s: Int) -> String { s < 45 ? "just now" : s < 3600 ? "\(s / 60) min ago" : "\(s / 3600) h ago" }
+}
+
+/// Who to invite: only people who can sign in to the player.
+struct InvitePicker: View {
+    @ObservedObject var together: Together
+    @State private var picked = Set<String>()
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(together.inviting ?? []) { p in
+                        Button {
+                            if picked.contains(p.name) { picked.remove(p.name) } else { picked.insert(p.name) }
+                        } label: {
+                            HStack {
+                                Image(systemName: picked.contains(p.name) ? "checkmark.circle.fill" : "circle").accessibilityHidden(true)
+                                VStack(alignment: .leading) {
+                                    Text(p.name).bold()
+                                    Text((p.online == true ? "Using the app now" : "Not using the app right now") +
+                                         (p.notify == true ? " - gets a phone notification" : "")).font(.footnote)
+                                }
+                            }
+                        }
+                        .accessibilityAddTraits(picked.contains(p.name) ? .isSelected : [])
+                    }
+                } footer: {
+                    Text("They see an invitation in AD Player (and a phone notification when one is set up). Only people who can sign in to the player are listed.")
+                }
+            }
+            .navigationTitle("Invite people")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Not now") { together.inviting = nil } }
+                ToolbarItem(placement: .confirmationAction) { Button("Invite") { together.inviteSend(Array(picked)) }.disabled(picked.isEmpty) }
             }
         }
     }
