@@ -428,6 +428,9 @@ struct TogetherPerson: Decodable, Equatable, Hashable {
 struct TogetherEvent: Decodable, Equatable, Hashable {
     let ago: Int?
     let text: String
+    // (how long ago changes every second: not counted, so the screens aren't redrawn every second)
+    static func == (a: TogetherEvent, b: TogetherEvent) -> Bool { a.text == b.text }
+    func hash(into h: inout Hasher) { h.combine(text) }
 }
 
 struct Invite: Decodable, Identifiable, Hashable {
@@ -438,9 +441,11 @@ struct Invite: Decodable, Identifiable, Hashable {
     let names: [String]?
     let invited: Bool?
     let invitedBy: String?
+    let invitedAgo: Int?
     enum CodingKeys: String, CodingKey {
         case id, title, by, kind, names, invited
         case invitedBy = "invited_by"
+        case invitedAgo = "invited_ago"
     }
 
     /// "Ann invites you to watch … together (with Bob)." or "Ann is playing … together."

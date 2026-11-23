@@ -15,7 +15,7 @@ final class Together: ObservableObject {
     @Published private(set) var invites: [Invite] = []
     /// The people she can invite (the picker is open while this isn't nil).
     @Published var inviting: [Person]?
-    private var declined = Set<String>()
+    private var declined: [String: Date] = [:]
     var inBackground = false
 
     weak var model: AppModel?
@@ -121,6 +121,7 @@ final class Together: ObservableObject {
     }
 
     private func stopPlayers() {
+        if model?.video.active == true { model?.video.stop() }
         phone?.stop(saving: true, quiet: true, notify: false)
         book?.stop(saving: true, quiet: true, notify: false)
     }
@@ -500,6 +501,7 @@ final class Together: ObservableObject {
     }
 
     private func finish() {
+        inviting = nil
         beatTask?.cancel()
         beatTask = nil
         roomID = ""
@@ -561,7 +563,11 @@ final class Together: ObservableObject {
         guard !active, let api = api, model?.needSignIn == false else { invites = []; return }
         guard let r = try? await api.get("api/play/together/list", ["cid": cid], as: InvitesResponse.self) else { return }
         guard !active else { return }
-        invites = r.rooms.filter { !declined.contains($0.id) }
+        // "Not now" hides it - until she's invited again after that
+        for inv in r.rooms where declined[inv.id] != nil && inv.invited == true && Double(inv.invitedAgo ?? 1_000_000) < Date().timeIntervalSince(declined[inv.id]!) {
+            declined[inv.id] = nil; seenInvites.remove(inv.id + ":i")
+        }
+        invites = r.rooms.filter { declined[$0.id] == nil }
         for inv in invites where !seenInvites.contains(inv.id + (inv.invited == true ? ":i" : "")) {
             seenInvites.insert(inv.id + (inv.invited == true ? ":i" : ""))     // (again when an invitation comes for a room already listed)
             if inBackground {
@@ -574,7 +580,7 @@ final class Together: ObservableObject {
 
     /// Not now: the invitation goes away here, and the one who invited sees "said not now".
     func decline(_ inv: Invite) {
-        declined.insert(inv.id)
+        declined[inv.id] = Date()
         invites.removeAll { $0.id == inv.id }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["together-" + inv.id])
         if inv.invited == true, let api = api {

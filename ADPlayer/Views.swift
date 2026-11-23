@@ -17,8 +17,15 @@ struct RootView: View {
             } else if model.sight == "none" {
                 HomeView()
             } else {
-                WatchRoot()
+                WatchRoot(video: model.video)
             }
+        }
+        .alert("Pair \(model.pairing?.name ?? "the Apple TV")", isPresented: Binding(get: { model.pairing != nil }, set: { if !$0 { model.pairing = nil } })) {
+            TextField("Code", text: $model.pairCode).keyboardType(.numberPad)
+            Button("Pair") { model.pairFinish() }
+            Button("Cancel", role: .cancel) { model.pairing = nil }
+        } message: {
+            Text("Type the code the TV shows.")
         }
         .onChange(of: phase) { newPhase in
             model.scene(active: newPhase == .active)
@@ -281,13 +288,7 @@ struct HomeView: View {
                     Button("Refresh the TV list") {
                         Task { await model.refreshDevices(announce: true) }
                     }
-                    .alert("Pair \(model.pairing?.name ?? "the Apple TV")", isPresented: Binding(get: { model.pairing != nil }, set: { if !$0 { model.pairing = nil } })) {
-                        TextField("Code", text: $model.pairCode).keyboardType(.numberPad)
-                        Button("Pair") { model.pairFinish() }
-                        Button("Cancel", role: .cancel) { model.pairing = nil }
-                    } message: {
-                        Text("Type the code the TV shows.")
-                    }
+
                     Picker("Play", selection: Binding(get: { shown }, set: { what = $0; query = "" })) {
                         ForEach(kinds, id: \.0) { k in Text(k.1).tag(k.0) }
                     }
@@ -463,7 +464,7 @@ struct InvitesSection: View {
             Section {
                 ForEach(together.invites) { inv in
                     Text(inv.line)
-                    Button("Join \(inv.by): \(inv.title)") { together.join(inv) }
+                    Button("Join \(inv.invitedBy ?? inv.by): \(inv.title)") { together.join(inv) }
                     Button("Not now") { together.decline(inv) }
                         .accessibilityLabel("Not now: \(inv.by), \(inv.title)")
                 }
@@ -983,6 +984,9 @@ struct NowPlayingView: View {
                     Button("Find something else") { model.showPlayer = false }
                 }
             }
+            .sheet(isPresented: Binding(get: { together.inviting != nil }, set: { if !$0 { together.inviting = nil } })) {
+                InvitePicker(together: together)
+            }
             // VoiceOver's escape (two-finger scrub) closes it, like Find something else
             .accessibilityAction(.escape) { model.showPlayer = false }
             .navigationTitle("Now playing")
@@ -1158,7 +1162,7 @@ struct TogetherControls: View {
     var body: some View {
         Section {
             // who's in it, and what each phone is doing
-            ForEach(together.room?.people ?? [], id: \.name) { p in
+            ForEach(Array((together.room?.people ?? []).enumerated()), id: \.offset) { _, p in
                 Text("\(p.me == true ? "You" : p.name): \(p.stateText ?? p.state ?? "")")
             }
             Button("Invite people") { Task { await together.inviteOpen() } }
@@ -1167,9 +1171,6 @@ struct TogetherControls: View {
             }
         } header: {
             Heading("Playing together")
-        }
-        .sheet(isPresented: Binding(get: { together.inviting != nil }, set: { if !$0 { together.inviting = nil } })) {
-            InvitePicker(together: together)
         }
         Section {
             // swipe up or down: forward or back 30 seconds, for everyone

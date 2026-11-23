@@ -52,7 +52,6 @@ struct Card: Decodable, Identifiable, Hashable {
     let poster: String?
     let thumb: String?
     let backdrop: String?
-    let year: Int?
     let hasAD: Bool?
     let pct: Int?
     let resume: String?
@@ -60,13 +59,16 @@ struct Card: Decodable, Identifiable, Hashable {
     let length: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, type, label, name, poster, thumb, backdrop, year, pct, resume, length
+        case id, type, label, name, poster, thumb, backdrop, pct, resume, length
         case hasAD = "has_ad"
         case seriesName = "series_name"
     }
 }
 
 struct CardsResponse: Decodable { let items: [Card] }
+
+/// An empty text counts as none (the PC sends "" for a picture it doesn't have).
+func nz(_ s: String?) -> String? { (s ?? "").isEmpty ? nil : s }
 
 // MARK: - First sign-in: how do you see the screen?
 
@@ -87,24 +89,26 @@ struct SightChoices: View {
     @EnvironmentObject var model: AppModel
     let current: String
     var body: some View {
+        let look = Look.of(model)
         VStack(spacing: 12) {
             ForEach(SIGHTS, id: \.0) { s in
                 Button {
                     model.sightSave(["sight": s.0], said: sightSaid(s.0))
                 } label: {
                     HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: current == s.0 ? "largecircle.fill.circle" : "circle").font(.title2)
+                        Image(systemName: current == s.0 ? "largecircle.fill.circle" : "circle").font(.title2).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(s.1).font(.title3.bold())
                             Text(s.2)
-                            ForEach(s.3, id: \.self) { b in Text("· " + b).font(.subheadline).foregroundStyle(.secondary) }
+                            ForEach(s.3, id: \.self) { b in Text("· " + b).font(.subheadline).foregroundStyle(look.sub) }
                         }
                         Spacer(minLength: 0)
                     }
                     .padding(18)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12)))
-                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(current == s.0 ? Color.teal : Color(white: 0.3), lineWidth: current == s.0 ? 3 : 1))
+                    .foregroundStyle(look.fg)
+                    .background(RoundedRectangle(cornerRadius: 18).fill(look.card))
+                    .overlay(RoundedRectangle(cornerRadius: 18).stroke(current == s.0 ? look.accent : look.line, lineWidth: current == s.0 ? 3 : look.lineWidth))
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
@@ -135,6 +139,7 @@ struct SightChooser: View {
 
 struct WatchRoot: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject var video: VideoModel
     @State private var tab = "home"
 
     var body: some View {
@@ -152,17 +157,25 @@ struct WatchRoot: View {
                 .tabItem { Label("You", systemImage: "person.crop.circle") }.tag("you")
         }
         .tint(look.accent)
-        .dynamicTypeSize(Look.typeSize(model))
+        .modifier(LowSize(size: model.low ? Look.typeSize(model) : nil))
         .preferredColorScheme(look.bg == .white ? .light : .dark)
         .overlay(alignment: .bottom) { MiniBar(video: model.video, phone: model.phone, book: model.book, look: look) }
         .fullScreenCover(isPresented: $model.showPlayer) {
             NowPlayingView(phone: model.phone, book: model.book, together: model.together, tv: model.tvState)
                 .environmentObject(model)
         }
-        .fullScreenCover(isPresented: Binding(get: { model.video.shown }, set: { if !$0 { model.video.shown = false } })) {
-            VideoScreen(video: model.video).environmentObject(model)
+        .fullScreenCover(isPresented: $video.shown) {
+            VideoScreen(video: video).environmentObject(model)
         }
         .transaction { if model.low && model.opts.still != false { $0.disablesAnimations = true } }
+    }
+}
+
+/// Low vision's text size; full vision keeps the phone's own.
+struct LowSize: ViewModifier {
+    let size: DynamicTypeSize?
+    func body(content: Content) -> some View {
+        if let s = size { content.dynamicTypeSize(s) } else { content }
     }
 }
 
@@ -225,8 +238,10 @@ struct WatchHome: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 InvitesSection(together: model.together).padding(.horizontal)
-                if let hero = (rows["continue"] ?? []).first ?? (rows["recent"] ?? []).first {
-                    Hero(card: hero, look: look)
+                if let hero = (rows["continue"] ?? []).first {
+                    Hero(card: hero, look: look, head: "CONTINUE WATCHING")
+                } else if let hero = (rows["recent"] ?? []).first {
+                    Hero(card: hero, look: look, head: "NEW WITH AUDIO DESCRIPTION")
                 }
                 ForEach(ROWS, id: \.0) { r in
                     if let list = rows[r.0], !list.isEmpty {
@@ -279,17 +294,18 @@ struct Hero: View {
     @EnvironmentObject var model: AppModel
     let card: Card
     let look: Look
+    let head: String
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if model.opts.posters != false || !look.low {
-                AsyncImage(url: model.api?.media(card.backdrop ?? card.thumb ?? "api/play/img/\(card.id)/Backdrop")) { img in
+                AsyncImage(url: model.api?.media(nz(card.backdrop) ?? nz(card.thumb) ?? "/api/play/img/\(card.id)/Backdrop")) { img in
                     img.resizable().scaledToFill()
                 } placeholder: { look.card }
                 .frame(height: 210).clipped().accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("CONTINUE WATCHING").font(.caption.bold()).foregroundStyle(look.accent)
-                Text(card.seriesName ?? card.name ?? card.label).font(.title.bold())
+                Text(head).font(.caption.bold()).foregroundStyle(look.accent)
+                Text(nz(card.seriesName) ?? nz(card.name) ?? card.label).font(.title.bold()).accessibilityAddTraits(.isHeader)
                 if let r = card.resume, !r.isEmpty { Text("Resumes at \(r)").foregroundStyle(look.sub) }
                 NavigationLink { DetailPage(id: card.id, title: card.label) } label: {
                     Text("More info").bold().frame(maxWidth: .infinity, minHeight: look.low ? 64 : 48)
@@ -311,7 +327,7 @@ struct PosterCard: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topLeading) {
                 if model.opts.posters != false || !look.low {
-                    AsyncImage(url: model.api?.media(wide ? (card.thumb ?? card.backdrop ?? "api/play/img/\(card.id)/Thumb") : (card.poster ?? "api/play/img/\(card.id)/Primary"))) { img in
+                    AsyncImage(url: model.api?.media(wide ? (nz(card.thumb) ?? nz(card.backdrop) ?? "/api/play/img/\(card.id)/Thumb") : (nz(card.poster) ?? "/api/play/img/\(card.id)/Primary"))) { img in
                         img.resizable().scaledToFill()
                     } placeholder: { look.card }
                 } else {
@@ -396,7 +412,7 @@ struct DetailPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if model.opts.posters != false || !look.low {
-                    AsyncImage(url: model.api?.media((info["backdrop"] as? String) ?? "api/play/img/\(id)/Backdrop")) { img in
+                    AsyncImage(url: model.api?.media(nz(info["backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop")) { img in
                         img.resizable().scaledToFill()
                     } placeholder: { look.card }
                     .frame(height: 220).clipped().accessibilityHidden(true)
@@ -429,7 +445,9 @@ struct DetailPage: View {
                                 if let r = e.resume, !r.isEmpty { Text("Resumes at \(r)").foregroundStyle(look.sub) }
                                 HStack {
                                     BigButton(e.canResume ? "Resume" : "Play", main: true, look: look) { playItem(e, resume: e.canResume) }
+                                        .accessibilityLabel((e.canResume ? "Resume " : "Play ") + e.label)
                                     BigButton("Together", look: look) { model.play(e, resume: e.canResume, together: true) }
+                                        .accessibilityLabel("Play \(e.label) together")
                                 }
                             }
                             .padding(12)
@@ -525,7 +543,7 @@ struct YouPage: View {
     var body: some View {
         Form {
             Section { Text("Signed in as \(model.me?.name ?? "")") ; SignOutButton() } header: { Heading("Account") }
-            Section {
+            if model.sightKnown { Section {
                 SightChoices(current: model.sight).listRowBackground(Color.clear)
                 if model.low {
                     Picker("Text size", selection: Binding(get: { model.opts.size ?? "large" }, set: { model.sightSave(["size": $0], said: "Text size: \($0).") })) {
@@ -540,7 +558,7 @@ struct YouPage: View {
                     Toggle("Turn off moving animations", isOn: Binding(get: { model.opts.still != false }, set: { model.sightSave(["still": $0 ? "1" : "0"], said: "Animations: \($0 ? "off" : "on").") }))
                     Toggle("Show posters and covers", isOn: Binding(get: { model.opts.posters != false }, set: { model.sightSave(["posters": $0 ? "1" : "0"], said: "Posters: \($0 ? "on" : "off").") }))
                 }
-            } header: { Heading("How you see the screen") }
+            } header: { Heading("How you see the screen") } }
             Section {
                 Picker("Play on", selection: $model.target) {
                     ForEach(model.playOnList, id: \.0) { d in Text(d.1).tag(d.0) }
@@ -601,7 +619,18 @@ final class VideoModel: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var endObs: NSObjectProtocol?
 
-    func start(_ it: Item, resume: Bool, aidx a: Int? = nil, at: Double? = nil) {
+    private var statusObs: NSKeyValueObservation?
+    private var failObs: NSObjectProtocol?
+
+    init() {
+        player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible     // the description goes on with the screen locked
+        statusObs = player.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+            let paused = p.timeControlStatus == .paused
+            Task { @MainActor in if self?.active == true { self?.paused = paused } }
+        }
+    }
+
+    func start(_ it: Item, resume: Bool, aidx a: Int? = nil, at: Double? = nil, show: Bool = true) {
         guard let api = model?.api else { return }
         model?.phone.stop(saving: true, quiet: true, notify: false)
         model?.book.stop(saving: true, quiet: true, notify: false)
@@ -625,7 +654,8 @@ final class VideoModel: ObservableObject {
                 let pos = at ?? (resume ? (r.resumeTicks ?? 0) / 10_000_000 : 0)
                 if pos > 5 { await self.player.seek(to: CMTime(seconds: max(0, pos - 3), preferredTimescale: 600)) }
                 self.player.play()
-                self.active = true; self.paused = false; self.shown = true
+                self.active = true; self.paused = false
+                if show { self.shown = true }
                 self.watchEnd(pi)
                 self.saveLoop()
             } catch {
@@ -649,8 +679,8 @@ final class VideoModel: ObservableObject {
         start(it, resume: false, aidx: index, at: player.currentTime().seconds + 3)
     }
 
-    func stop() {
-        save()
+    func stop(saving: Bool = true) {
+        if saving { save() }
         saveTask?.cancel()
         player.pause()
         player.replaceCurrentItem(with: nil)
@@ -690,6 +720,10 @@ final class VideoModel: ObservableObject {
         endObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: pi, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.ended() }
         }
+        if let o = failObs { NotificationCenter.default.removeObserver(o) }
+        failObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: pi, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.model?.say("The video stopped working. Press Stop, then start it again.") }
+        }
     }
 
     private func ended() {
@@ -697,10 +731,10 @@ final class VideoModel: ObservableObject {
         guard let api = model?.api, let it = item else { return }
         let done = title
         Task {
-            if self.hasNext, let r = try? await api.get("api/play/listen/next", ["item": it.id], as: NextResponse.self), let n = r.item {
-                self.start(n, resume: true)
+            if self.hasNext, let r = try? await api.get("api/play/listen/next", ["item": it.id, "kind": "video"], as: NextResponse.self), let n = r.item {
+                self.start(n, resume: true, show: self.shown)
             } else {
-                self.stop()
+                self.stop(saving: false)
                 self.model?.say("Finished \(done).")
             }
         }
@@ -724,9 +758,7 @@ struct VideoScreen: View {
     @State private var tracks: [TrackList.Track] = []
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
-            VideoPlayer(player: video.player).ignoresSafeArea()
+        VStack(spacing: 0) {                       // (the buttons above the picture: AVKit's own stay free)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
                     Button { video.shown = false } label: {
@@ -755,11 +787,14 @@ struct VideoScreen: View {
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8)
-                .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .top, endPoint: .bottom))
-                if video.stats { StatsPanel(video: video).padding(.horizontal, 8) }
+            }
+            ZStack(alignment: .topLeading) {
+                VideoPlayer(player: video.player).ignoresSafeArea(edges: .bottom)
+                if video.stats { StatsPanel(video: video).padding(8) }
             }
         }
-        .task {
+        .background(Color.black.ignoresSafeArea())
+        .task(id: video.item?.id) {
             guard let api = model.api, let it = video.item else { return }
             tracks = (try? await api.get("api/play/tracks", ["id": it.id], as: TrackList.self).audio) ?? []
         }

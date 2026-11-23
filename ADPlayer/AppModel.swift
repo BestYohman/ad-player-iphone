@@ -47,7 +47,12 @@ final class AppModel: ObservableObject {
     @Published var continueBooks: [BookItem] = []
     @Published var booksSetUp = true          // false: Audiobookshelf isn't set up on the PC, so the audiobook parts are hidden
     @Published var booksNote = ""
-    @Published var me: Me?
+    @Published var me: Me? {
+        didSet {                       // kept, so the right layout shows straight away next time (before the PC answers)
+            if let v = me?.sight { UserDefaults.standard.set(v, forKey: "sight") }
+            if let o = me?.sightOpts, let d = try? JSONEncoder().encode(o) { UserDefaults.standard.set(d, forKey: "sightOpts") }
+        }
+    }
     @Published var needSignIn = false
     /// The address in use now: the PC's home-network address on the home Wi-Fi, otherwise the one typed in.
     @Published var activeAddress = ""
@@ -63,17 +68,41 @@ final class AppModel: ObservableObject {
 
     // MARK: how she sees the screen
 
-    /// "none" (the audio-only layout), "low" (big and high contrast) or "full" (posters and rows).
-    var sight: String { me?.sight ?? (me?.role == "listen" ? "none" : "full") }
-    /// An older PC doesn't ask (it couldn't keep the answer).
+    /// "none" (the audio-only layout), "low" (big and high contrast) or "full" (posters and rows). Until the PC answers:
+    /// the last answer; an older PC that doesn't know about it: the audio-only layout, as before.
+    var sight: String { me?.sight ?? UserDefaults.standard.string(forKey: "sight") ?? "none" }
+    /// An older PC doesn't ask (it couldn't keep the answer); nor while it hasn't answered yet.
     var sightChosen: Bool { me?.sight == nil || me?.sightChosen != false }
+    /// The PC keeps how she sees the screen (so it can be changed here).
+    var sightKnown: Bool { me?.sight != nil }
     var low: Bool { sight == "low" }
-    var opts: SightOpts { me?.sightOpts ?? SightOpts() }
-    /// The video plays on this phone: full vision, or low vision with the video on; people who only listen get the audio.
-    var videoOK: Bool { me?.role != "listen" && (sight == "full" || (sight == "low" && opts.video != false)) }
+    var opts: SightOpts {
+        if let o = me?.sightOpts { return o }
+        if let d = UserDefaults.standard.data(forKey: "sightOpts"), let o = try? JSONDecoder().decode(SightOpts.self, from: d) { return o }
+        return SightOpts()
+    }
+    /// The video plays on this phone: full vision, or low vision with the video on (as the PC decides: someone who
+    /// only listens sees the video once they chose low or full vision themselves).
+    var videoOK: Bool {
+        (sight == "full" || (sight == "low" && opts.video != false)) && (me?.role != "listen" || me?.sightChosen == true)
+    }
 
     func sightSave(_ form: [String: String], said: String) {
         guard let api = api else { return }
+        if var m = me, var o = m.sightOpts {          // shown straight away (VoiceOver reads the new value)
+            for (k, v) in form {
+                switch k {
+                case "size": o.size = v
+                case "screen": o.screen = v
+                case "video": o.video = v == "1"
+                case "focus": o.focus = v == "1"
+                case "still": o.still = v == "1"
+                case "posters": o.posters = v == "1"
+                default: break
+                }
+            }
+            m.sightOpts = o; me = m
+        }
         Task {
             do {
                 let r = try await api.post("api/play/sight", form, as: SightResponse.self)
@@ -579,6 +608,7 @@ final class AppModel: ObservableObject {
 
     /// at: start this many seconds into the book (a chapter); otherwise her place when resume is true.
     func playBook(id: String, label: String, resume: Bool, at: Double? = nil, together startTogether: Bool = false) {
+        if video.active { video.stop() }
         if together.active && together.isBook && together.room?.item == id, let at = at, !startTogether {
             together.seekTo(at)                                    // a chapter of the book we're listening to together
             showPlayer = true
@@ -619,6 +649,7 @@ final class AppModel: ObservableObject {
     // MARK: playing
 
     func play(_ item: Item, resume: Bool, together startTogether: Bool = false) {
+        if video.active { video.stop() }
         if startTogether {
             phoneForTogether()
             together.startShow(item, resume: resume)
@@ -701,6 +732,7 @@ final class AppModel: ObservableObject {
 
     /// Magic Tap (two-finger double tap): play or pause what's playing - on this phone, together, or on the TV.
     func playPause() {
+        if video.active { video.playPause(); return }
         if together.active { together.command("playpause"); return }
         if isPhone {
             if book.active { book.togglePause() }
@@ -852,6 +884,7 @@ final class AppModel: ObservableObject {
         guard active else {
             phone.saveNow()
             book.saveNow()
+            if video.active { video.save() }
             pollTask = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 30_000_000_000)
@@ -918,6 +951,18 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     private func remote(_ action: String, _ value: Double = 0) -> MPRemoteCommandHandlerStatus {
+        if video.active {
+            switch action {
+            case "play": if video.paused { video.playPause() }
+            case "pause": if !video.paused { video.playPause() }
+            case "toggle": video.playPause()
+            case "fwd": video.skip(30)
+            case "back": video.skip(-30)
+            case "seek": video.player.seek(to: CMTime(seconds: value, preferredTimescale: 600))
+            default: return .commandFailed
+            }
+            return .success
+        }
         if together.active {
             switch action {
             case "play": together.command("play")
@@ -964,7 +1009,7 @@ final class AppModel: ObservableObject {
     /// Carries on with the last thing played on this phone, from her place.
     @discardableResult
     func resumeLast() -> Bool {
-        guard !phoneBusy, !together.active, let l = LastPlay.load(), api != nil else { return false }
+        guard !phoneBusy, !together.active, !video.active, let l = LastPlay.load(), api != nil else { return false }
         if !isPhone { target = AppModel.phoneID }
         showPlayer = true
         if l.kind == "book" {
@@ -1072,7 +1117,7 @@ final class AppModel: ObservableObject {
     func soundIdle() {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !self.phone.active, !self.book.active, !self.together.active else { return }
+            guard !self.phone.active, !self.book.active, !self.together.active, !self.video.active else { return }
             KeepAlive.shared.stop()
             Sound.deactivate()
         }
