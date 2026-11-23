@@ -3,6 +3,13 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.10.0 - 2026-11-23
+- **How do you see the screen?** asked at the first sign-in, as on the web page and Android (needs the PC's app 2.31.0). No vision keeps the VoiceOver layout as it was. Low and full vision get the poster layout: Home with Continue watching, New with audio description, New TV shows and New movies; Shows, Movies, Books and You tabs; a page for each show and movie. Low vision: bigger text, dark, light or yellow on black, and posters can be turned off.
+- **The video on the phone** (low and full vision): with the audio description first, a choice of sound track, AirPlay, and Stats for nerds (the picture, dropped frames, the connection, and from the PC whether it's copied or remade and why).
+- **Play together:** choose who to invite. Invitations come with Join and Not now (and a notification while something plays in the background). A line says what's going on, with who's in it and what each person's phone is doing, and What happened.
+- **Your TV on your phone:** while the TV app plays something signed in as you, "Your TV is playing ... - Join" carries it on here, in step with the TV (needs the PC's app 2.45.0).
+- **Play on:** the ones used last come first; Chromecast and Apple TV are listed (an Apple TV that asks is paired once with its code).
+
 ## 1.9.0 - 2026-11-19
 - VoiceOver: each episode, movie, book and download is one stop. Play together, Start over, Download, Favorites, Ask for audio description and Remove are actions - swipe up or down. The buttons are still on the screen.
 - Magic Tap (two-finger double tap) plays and pauses, on the phone, together or on the TV.
