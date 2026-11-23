@@ -3,6 +3,11 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.11.0 - 2026-11-23
+- **Settings** (with a gear) instead of You, in the tabs at the bottom.
+- **A movie's, show's or episode's page:** the picture at the top fades into the page. An episode's picture is the one from that episode, and its show and its season and episode are bold above its name (not again at the top of the screen).
+- **AD Player for Apple TV** is new: it's built from the same code, as its own app (see README-TV.md).
+
 ## 1.10.0 - 2026-11-23
 - **How do you see the screen?** asked at the first sign-in, as on the web page and Android (needs the PC's app 2.31.0). No vision keeps the VoiceOver layout as it was. Low and full vision get the poster layout: Home with Continue watching, New with audio description, New TV shows and New movies; Shows, Movies, Books and You tabs; a page for each show and movie. Low vision: bigger text, dark, light or yellow on black, and posters can be turned off.
 - **The video on the phone** (low and full vision): with the audio description first, a choice of sound track, AirPlay, and Stats for nerds (the picture, dropped frames, the connection, and from the PC whether it's copied or remade and why).
