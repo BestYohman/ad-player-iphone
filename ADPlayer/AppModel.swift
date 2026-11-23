@@ -104,8 +104,8 @@ final class AppModel: ObservableObject {
         phone = PhonePlayer()
         book = BookPlayer()
         together = Together()
-        video.model = self
         tvState = TVState()
+        video.model = self
         phone.api = { [weak self] in self?.api }
         phone.say = { [weak self] text in self?.say(text) }
         phone.onEnded = { [weak self] in
