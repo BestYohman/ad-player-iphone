@@ -1,0 +1,2 @@
+ADPlayer/AppModel.swift:1042:32: error: 'AVAudioSessionInterruptionReasonKey' is unavailable in tvOS
+ADPlayer/Offline.swift:259:18: error: value of type 'URLResourceValues' has no member 'volumeAvailableCapacityForImportantUsage'
