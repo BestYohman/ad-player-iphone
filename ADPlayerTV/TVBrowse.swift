@@ -200,7 +200,6 @@ struct TVGrid: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 40) {
                     Text("\(title) (\(cards.count))").font(sz.f(52, .heavy)).accessibilityAddTraits(.isHeader)
-                    Spacer()
                     Button { withAD.toggle(); Task { await load() } } label: {
                         Text("Audio description only: \(withAD ? "on" : "off")").font(sz.f(28, .semibold)).tvLabel(look)
                     }
@@ -211,6 +210,7 @@ struct TVGrid: View {
                     ForEach(cards) { c in TVCard(card: c, wide: false) }
                 }
                 .padding(.horizontal, 80)
+                .focusSection()                     // down from the button lands on the posters
                 if loading { ProgressView().padding(80) } else if cards.isEmpty { Text("Nothing here.").font(sz.f(32)).padding(80) }
             }
             .padding(.vertical, 30)
