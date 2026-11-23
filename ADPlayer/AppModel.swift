@@ -1039,9 +1039,14 @@ final class AppModel: ObservableObject {
         n.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let info = note.userInfo ?? [:]
             let type = (info[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap { AVAudioSession.InterruptionType(rawValue: $0) }
+            #if os(iOS)
             let reason = (info[AVAudioSessionInterruptionReasonKey] as? UInt).flatMap { AVAudioSession.InterruptionReason(rawValue: $0) }
+            let suspended = reason == .appWasSuspended
+            #else
+            let suspended = false                    // (the Apple TV doesn't say why)
+            #endif
             let resume = (info[AVAudioSessionInterruptionOptionKey] as? UInt).map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) } ?? false
-            Task { @MainActor in self?.interruption(type, suspended: reason == .appWasSuspended, resume: resume) }
+            Task { @MainActor in self?.interruption(type, suspended: suspended, resume: resume) }
         }
         n.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap { AVAudioSession.RouteChangeReason(rawValue: $0) }

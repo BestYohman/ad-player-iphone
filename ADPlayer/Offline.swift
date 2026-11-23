@@ -254,10 +254,14 @@ final class Offline: ObservableObject {
 
     /// Not enough room on the phone for this many bytes? Then what to say.
     private func noRoom(_ need: Int64) -> String? {
+        #if os(tvOS)
+        return nil                                   // (the Apple TV app doesn't download)
+        #else
         guard need > 0,
               let free = (try? Offline.folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
                 .volumeAvailableCapacityForImportantUsage, free > 0 else { return nil }
         return free < need + 50_000_000 ? "not enough space on the phone (needs \(Offline.size(need)))" : nil
+        #endif
     }
 
     // MARK: starting a download
