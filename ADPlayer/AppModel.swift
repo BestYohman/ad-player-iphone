@@ -55,6 +55,37 @@ final class AppModel: ObservableObject {
     let phone: PhonePlayer
     let book: BookPlayer
     let together: Together
+    let video = VideoModel()
+    /// Low and full vision: the video plays on this phone (off: just the audio, as before).
+    @Published var preferVideo: Bool = UserDefaults.standard.object(forKey: "preferVideo") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(preferVideo, forKey: "preferVideo") }
+    }
+
+    // MARK: how she sees the screen
+
+    /// "none" (the audio-only layout), "low" (big and high contrast) or "full" (posters and rows).
+    var sight: String { me?.sight ?? (me?.role == "listen" ? "none" : "full") }
+    /// An older PC doesn't ask (it couldn't keep the answer).
+    var sightChosen: Bool { me?.sight == nil || me?.sightChosen != false }
+    var low: Bool { sight == "low" }
+    var opts: SightOpts { me?.sightOpts ?? SightOpts() }
+    /// The video plays on this phone: full vision, or low vision with the video on; people who only listen get the audio.
+    var videoOK: Bool { me?.role != "listen" && (sight == "full" || (sight == "low" && opts.video != false)) }
+
+    func sightSave(_ form: [String: String], said: String) {
+        guard let api = api else { return }
+        Task {
+            do {
+                let r = try await api.post("api/play/sight", form, as: SightResponse.self)
+                if var m = self.me {
+                    m.sight = r.sight ?? m.sight; m.sightChosen = r.sightChosen ?? true; m.sightOpts = r.sightOpts ?? m.sightOpts
+                    self.me = m
+                }
+                if !self.videoOK && self.video.active { self.video.stop() }
+                self.say(said)
+            } catch { self.say(error.localizedDescription) }
+        }
+    }
     private let monitor = NWPathMonitor()
     private var onWiFi = false
     private var addressTask: Task<Void, Never>?
@@ -73,6 +104,7 @@ final class AppModel: ObservableObject {
         phone = PhonePlayer()
         book = BookPlayer()
         together = Together()
+        video.model = self
         tvState = TVState()
         phone.api = { [weak self] in self?.api }
         phone.say = { [weak self] text in self?.say(text) }

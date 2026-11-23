@@ -12,8 +12,12 @@ struct RootView: View {
                 SetupView(first: true)
             } else if model.needSignIn {
                 SignInView()
-            } else {
+            } else if !model.sightChosen {
+                SightChooser()
+            } else if model.sight == "none" {
                 HomeView()
+            } else {
+                WatchRoot()
             }
         }
         .onChange(of: phase) { newPhase in

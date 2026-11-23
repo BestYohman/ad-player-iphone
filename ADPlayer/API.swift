@@ -166,6 +166,15 @@ struct API {
         return try await send(request, as: type)
     }
 
+    /// The answer as it came (for pages with many fields, read as a dictionary).
+    func raw(_ path: String, _ query: [String: String?] = [:]) async throws -> Data {
+        var request = URLRequest(url: url(path, query))
+        request.httpShouldHandleCookies = false
+        if !API.token.isEmpty { request.setValue(API.token, forHTTPHeaderField: "X-ADP-Token") }
+        do { return try await API.session.data(for: request).0 }
+        catch let e as URLError { throw API.explain(e) }
+    }
+
     /// token: another sign-in to send instead of this phone's own (a sign-out kept for later).
     func post<T: Decodable>(_ path: String, _ form: [String: String], token: String? = nil, as type: T.Type) async throws -> T {
         var request = URLRequest(url: url(path))
@@ -231,9 +240,15 @@ struct Me: Decodable {
     /// The key for that check (asked with ?lan_key=1 and the sign-in, over the address typed in).
     var lanProofID: String? = nil
     var lanProofKey: String? = nil
+    /// How she sees the screen (PC 2.31.0): "none" (the audio-only layout), "low" or "full" - kept on the PC
+    var sight: String? = nil
+    var sightChosen: Bool? = nil
+    var sightOpts: SightOpts? = nil
 
     enum CodingKeys: String, CodingKey {
-        case name, role, away
+        case name, role, away, sight
+        case sightChosen = "sight_chosen"
+        case sightOpts = "sight_opts"
         case signedIn = "signed_in"
         case loginNeeded = "login_needed"
         case serverID = "server_id"
@@ -241,6 +256,26 @@ struct Me: Decodable {
         case lanProof = "lan_proof"
         case lanProofID = "lan_proof_id"
         case lanProofKey = "lan_proof_key"
+    }
+}
+
+struct SightOpts: Codable, Equatable {
+    var size: String? = nil        // normal / large / larger / largest
+    var screen: String? = nil      // dark / light / yellow
+    var video: Bool? = nil
+    var focus: Bool? = nil
+    var still: Bool? = nil
+    var posters: Bool? = nil
+}
+
+struct SightResponse: Decodable {
+    let sight: String?
+    let sightChosen: Bool?
+    let sightOpts: SightOpts?
+    enum CodingKeys: String, CodingKey {
+        case sight
+        case sightChosen = "sight_chosen"
+        case sightOpts = "sight_opts"
     }
 }
 
