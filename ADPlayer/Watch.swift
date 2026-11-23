@@ -10,7 +10,7 @@ struct Look {
     let bg, fg, sub, card, accent, btn, btnFg, line: Color
     let low: Bool
 
-    static func of(_ m: AppModel) -> Look {
+    @MainActor static func of(_ m: AppModel) -> Look {
         guard m.low else {
             return Look(bg: Color(red: 0.043, green: 0.051, blue: 0.067), fg: .white, sub: Color(white: 0.72),
                         card: Color(white: 0.11), accent: Color(red: 0.18, green: 0.83, blue: 0.75), btn: .white, btnFg: .black,
@@ -32,7 +32,7 @@ struct Look {
 
     var lineWidth: CGFloat { low ? 3 : 1 }
 
-    static func typeSize(_ m: AppModel) -> DynamicTypeSize {
+    @MainActor static func typeSize(_ m: AppModel) -> DynamicTypeSize {
         guard m.low else { return .large }
         switch m.opts.size ?? "large" {
         case "normal": return .xLarge
@@ -403,9 +403,7 @@ struct DetailPage: View {
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Text((info["name"] as? String) ?? title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                    let meta = [info["years"] as? String ?? (info["year"].map { "\($0)" } ?? ""), info["length"] as? String ?? "", info["rating"] as? String ?? ""]
-                        .filter { !$0.isEmpty && $0 != "<null>" }.joined(separator: " · ")
-                    if !meta.isEmpty { Text(meta).foregroundStyle(look.sub) }
+                    if !metaLine.isEmpty { Text(metaLine).foregroundStyle(look.sub) }
                     if let it = item, it.type != "Series" {
                         BigButton(it.canResume ? "Resume" : "Play", main: true, look: look) { playItem(it, resume: it.canResume) }
                         BigButton("Play together", look: look) { model.play(it, resume: it.canResume, together: true) }
@@ -448,6 +446,16 @@ struct DetailPage: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    private var metaLine: String {
+        var parts: [String] = []
+        if let y = info["years"] as? String, !y.isEmpty { parts.append(y) }
+        else if let y = info["year"] as? Int { parts.append(String(y)) }
+        else if let y = info["year"] as? String, !y.isEmpty { parts.append(y) }
+        if let l = info["length"] as? String, !l.isEmpty { parts.append(l) }
+        if let r = info["rating"] as? String, !r.isEmpty { parts.append(r) }
+        return parts.joined(separator: " · ")
     }
 
     /// The video on this phone when she watches here; otherwise what she chose under Play on (a TV, or just the audio).

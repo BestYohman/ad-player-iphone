@@ -562,8 +562,8 @@ final class Together: ObservableObject {
         guard let r = try? await api.get("api/play/together/list", ["cid": cid], as: InvitesResponse.self) else { return }
         guard !active else { return }
         invites = r.rooms.filter { !declined.contains($0.id) }
-        for inv in invites where !seenInvites.contains(inv.id) {
-            seenInvites.insert(inv.id)
+        for inv in invites where !seenInvites.contains(inv.id + (inv.invited == true ? ":i" : "")) {
+            seenInvites.insert(inv.id + (inv.invited == true ? ":i" : ""))     // (again when an invitation comes for a room already listed)
             if inBackground {
                 if inv.invited == true { notify(inv) }
             } else {
@@ -606,7 +606,7 @@ final class Together: ObservableObject {
             if !first { say("Couldn't reach the app.") }
             return
         }
-        let have = Set((room?.people ?? []).map { $0.name })
+        let have = Set((room?.people ?? []).filter { $0.state != "declined" }.map { $0.name })
         let avail = r.people.filter { !have.contains($0.name) }
         if avail.isEmpty {
             if !first { say(r.people.isEmpty ? "Nobody else can sign in to the player." : "Everyone is already invited or playing.") }
