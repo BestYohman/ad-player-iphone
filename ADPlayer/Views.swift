@@ -401,6 +401,9 @@ struct HomeView: View {
                         Text("Signed in as \(name).")
                     }
                     Button("Settings") { showSettings = true }
+                    if model.me?.admin == true {
+                        NavigationLink("Server settings") { ServerSettingsView() }     // (whoever runs the server)
+                    }
                     if let name = model.me?.name, !name.isEmpty, !model.needSignIn {
                         SignOutButton()
                     }

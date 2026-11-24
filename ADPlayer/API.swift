@@ -244,9 +244,11 @@ struct Me: Decodable {
     var sight: String? = nil
     var sightChosen: Bool? = nil
     var sightOpts: SightOpts? = nil
+    /// Runs the server (the public server says so): may open its settings page from the player.
+    var admin: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case name, role, away, sight
+        case name, role, away, sight, admin
         case sightChosen = "sight_chosen"
         case sightOpts = "sight_opts"
         case signedIn = "signed_in"
@@ -854,4 +856,11 @@ struct FilterChoices: Decodable {
         if let ys = try? c.decode([Int].self, forKey: .years) { years = ys.map(String.init) }
         else { years = (try? c.decode([String].self, forKey: .years)) ?? [] }
     }
+}
+
+
+/// A one-time link to the server's settings page (for whoever runs it).
+struct AdminLink: Decodable {
+    let url: String?
+    let error: String?
 }

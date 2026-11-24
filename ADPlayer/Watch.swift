@@ -512,6 +512,9 @@ struct YouPage: View {
             Section {
                 NavigationLink("Downloads") { DownloadsView() }
                 NavigationLink("The PC and downloads") { SetupView(first: false, pushed: true) }
+                if model.me?.admin == true {
+                    NavigationLink("Server settings") { ServerSettingsView() }     // (whoever runs the server)
+                }
             }
         }
         .navigationTitle("Settings")
