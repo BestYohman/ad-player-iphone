@@ -80,12 +80,17 @@ struct SetupView: View {
     @ObservedObject private var offline = Offline.shared
     @Environment(\.dismiss) private var dismiss
     let first: Bool
+    /// Opened from Settings in the watch layout (already inside its navigation): no second one around it.
+    var pushed = false
     @State private var text = ""
     @State private var busy = false
     @State private var note = ""
 
     var body: some View {
-        NavigationStack {
+        if pushed { content } else { NavigationStack { content } }
+    }
+
+    @ViewBuilder private var content: some View {
             Form {
                 Section {
                     TextField("For example 192.168.1.20:5021", text: $text)
@@ -106,6 +111,14 @@ struct SetupView: View {
                 }
                 if !note.isEmpty {
                     Section { Text(note) }
+                }
+                if !first && !pushed && model.sightKnown {
+                    // the audio-only layout's way to the watch layouts (low or full vision)
+                    Section {
+                        SightChoices(current: model.sight).listRowBackground(Color.clear)
+                    } header: {
+                        Text("How you see the screen")
+                    }
                 }
                 if !first {
                     Section {
@@ -130,16 +143,15 @@ struct SetupView: View {
                 }
             }
             .accessibilityAction(.escape) { dismiss() }
-            .navigationTitle(first ? "Set up AD Player" : "Settings")
+            .navigationTitle(first ? "Set up AD Player" : pushed ? "The PC and downloads" : "Settings")
             .toolbar {
-                if !first {
+                if !first && !pushed {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") { dismiss() }
                     }
                 }
             }
             .onAppear { if text.isEmpty { text = model.server } }
-        }
     }
 
     private func connect() {
@@ -155,7 +167,7 @@ struct SetupView: View {
                 model.announce(problem)
             } else {
                 model.announce("Connected.")
-                if !first { dismiss() }
+                if !first && !pushed { dismiss() }
             }
         }
     }

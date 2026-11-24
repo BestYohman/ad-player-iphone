@@ -129,12 +129,14 @@ final class VideoModel: ObservableObject {
 
     private var statusObs: NSKeyValueObservation?
     private var failObs: NSObjectProtocol?
+    /// Counts starts and stops: a start that's still asking the PC when another start or Stop comes is dropped.
+    private var gen = 0
 
     init() {
         player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible     // the description goes on with the screen locked
         statusObs = player.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
             let paused = p.timeControlStatus == .paused
-            Task { @MainActor in if self?.active == true { self?.paused = paused } }
+            Task { @MainActor in if self?.active == true && self?.paused != paused { self?.paused = paused } }
         }
     }
 
@@ -144,11 +146,14 @@ final class VideoModel: ObservableObject {
         model?.book.stop(saving: true, quiet: true, notify: false)
         if model?.together.active == true { model?.together.leave(quiet: true) }
         model?.say("Starting \(it.label).")
+        gen += 1
+        let g = gen
         Task {
             do {
                 var f = ["item": it.id]
                 if let a = a { f["aidx"] = String(a) } else { f["aidx"] = "-3" }        // audio description first, when there is one
                 let r = try await api.post("api/play/video/prepare", f, as: VideoPrepare.self)
+                guard g == self.gen else { if r.tok != self.tok { self.stopStream(r.tok) }; return }
                 guard let url = api.media(r.url) else { return }
                 if !self.tok.isEmpty && self.tok != r.tok { self.stopStream(self.tok) }
                 self.tok = r.tok; self.item = it; self.aidx = r.aidx
@@ -161,6 +166,7 @@ final class VideoModel: ObservableObject {
                 self.player.replaceCurrentItem(with: pi)
                 let pos = at ?? (resume ? (r.resumeTicks ?? 0) / 10_000_000 : 0)
                 if pos > 5 { await self.player.seek(to: CMTime(seconds: max(0, pos - 3), preferredTimescale: 600)) }
+                guard g == self.gen else { return }
                 self.player.play()
                 self.active = true; self.paused = false
                 if show { self.shown = true }
@@ -188,12 +194,14 @@ final class VideoModel: ObservableObject {
     }
 
     func stop(saving: Bool = true) {
+        gen += 1
         if saving { save() }
         saveTask?.cancel()
         player.pause()
         player.replaceCurrentItem(with: nil)
         if !tok.isEmpty { stopStream(tok) }
         tok = ""; active = false; shown = false; stats = false; item = nil
+        model?.soundIdle()                     // (the sound session is let go when nothing else plays)
     }
 
     private func stopStream(_ t: String) {
@@ -218,7 +226,8 @@ final class VideoModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard let self = self, self.active else { return }
                 if self.player.timeControlStatus == .playing { self.save() }
-                self.paused = self.player.timeControlStatus == .paused
+                let p = self.player.timeControlStatus == .paused
+                if self.paused != p { self.paused = p }
             }
         }
     }

@@ -330,7 +330,7 @@ struct DetailPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if model.opts.posters != false || !look.low {
-                    AsyncImage(url: model.api?.media(bigPicture)) { img in
+                    AsyncImage(url: bigPicture.flatMap { model.api?.media($0) }) { img in
                         img.resizable().scaledToFill()
                     } placeholder: { look.card }
                     .frame(height: 220).clipped()
@@ -400,7 +400,8 @@ struct DetailPage: View {
     }
 
     /// The big picture: an episode's own picture from the episode; a show's or movie's background.
-    private var bigPicture: String {
+    private var bigPicture: String? {
+        if info.isEmpty { return nil }                       // (not yet known whether it's an episode: no wrong picture first)
         if item?.type == "Episode" { return nz(info["thumb"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Primary" }
         return nz(info["backdrop"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop"
     }
@@ -510,7 +511,7 @@ struct YouPage: View {
             } header: { Heading("Play on") }
             Section {
                 NavigationLink("Downloads") { DownloadsView() }
-                NavigationLink("Settings") { SetupView(first: false) }
+                NavigationLink("The PC and downloads") { SetupView(first: false, pushed: true) }
             }
         }
         .navigationTitle("Settings")

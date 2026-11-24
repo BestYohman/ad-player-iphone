@@ -81,7 +81,8 @@ struct TVRow: View {
                 .padding(.horizontal, 80)
                 .padding(.vertical, 24)
             }
-            .focusSection()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .focusSection()                  // (the whole width: up and down from anywhere land on this row)
         }
     }
 }
@@ -99,6 +100,7 @@ struct TVHome: View {
     @EnvironmentObject var model: AppModel
     @State private var rows: [String: [Card]] = [:]
     @State private var loaded = false
+    @State private var failed = ""
 
     var body: some View {
         let look = Look.of(model)
@@ -115,7 +117,9 @@ struct TVHome: View {
                         TVRow(title: r.1, cards: list, wide: r.2 || look.low)
                     }
                 }
-                if loaded && rows.values.allSatisfy({ $0.isEmpty }) {
+                if loaded && !failed.isEmpty {
+                    TVRetry(text: failed) { Task { await load() } }
+                } else if loaded && rows.values.allSatisfy({ $0.isEmpty }) {
                     Text("Nothing here yet.").font(sz.f(32)).padding(80)
                 }
                 if !loaded { ProgressView().padding(80) }
@@ -129,11 +133,26 @@ struct TVHome: View {
 
     private func load() async {
         guard let api = model.api else { return }
-        for r in TV_ROWS {
-            var q: [String: String?] = ["kind": r.0]
-            for (k, v) in r.3 { q[k] = v }
-            if let got = try? await api.get("api/play/list", q, as: CardsResponse.self) { rows[r.0] = Array(got.items.prefix(30)) }
+        loaded = false; failed = ""
+        // the rows are asked for together; when none of them comes, the page says so (with a way to try again)
+        var got: [String: [Card]] = [:]
+        var problem = ""
+        await withTaskGroup(of: (String, [Card]?, String).self) { g in
+            for r in TV_ROWS {
+                var q: [String: String?] = ["kind": r.0]
+                for (k, v) in r.3 { q[k] = v }
+                g.addTask {
+                    do { return (r.0, Array(try await api.get("api/play/list", q, as: CardsResponse.self).items.prefix(30)), "") }
+                    catch { return (r.0, nil, error.localizedDescription) }
+                }
+            }
+            for await (k, list, err) in g {
+                if let list = list { got[k] = list } else if problem.isEmpty { problem = err }
+            }
         }
+        if Task.isCancelled { return }
+        for (k, v) in got { rows[k] = v }
+        failed = got.isEmpty ? (problem.isEmpty ? "The PC didn't answer." : problem) : ""
         loaded = true
     }
 }
@@ -192,6 +211,7 @@ struct TVGrid: View {
     @State private var cards: [Card] = []
     @State private var withAD = true
     @State private var loading = true
+    @State private var failed = ""
 
     var body: some View {
         let look = Look.of(model)
@@ -205,13 +225,17 @@ struct TVGrid: View {
                     }
                 }
                 .padding(.horizontal, 80)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: look.low ? 330 : 250), spacing: 44)], alignment: .leading, spacing: 30) {
                     ForEach(cards) { c in TVCard(card: c, wide: false) }
                 }
                 .padding(.horizontal, 80)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()                     // down from the button lands on the posters
-                if loading { ProgressView().padding(80) } else if cards.isEmpty { Text("Nothing here.").font(sz.f(32)).padding(80) }
+                if loading { ProgressView().padding(80) }
+                else if !failed.isEmpty { TVRetry(text: failed) { Task { await load() } } }
+                else if cards.isEmpty { Text("Nothing here.").font(sz.f(32)).padding(80) }
             }
             .padding(.vertical, 30)
         }
@@ -222,9 +246,10 @@ struct TVGrid: View {
 
     private func load() async {
         guard let api = model.api else { return }
-        loading = true
+        loading = true; failed = ""
         let q: [String: String?] = ["kind": kind, "sort": "title", "ad": withAD ? nil : "all"]
-        if let r = try? await api.get("api/play/list", q, as: CardsResponse.self) { cards = r.items }
+        do { cards = try await api.get("api/play/list", q, as: CardsResponse.self).items }
+        catch { if !Task.isCancelled { failed = error.localizedDescription } }
         loading = false
     }
 }
@@ -261,7 +286,10 @@ struct TVSearch: View {
             do {
                 cards = try await api.get("api/play/list", ["kind": "search", "q": q, "device": AppModel.phoneID], as: CardsResponse.self).items
                 note = cards.isEmpty ? "Nothing found for \(q)." : ""
-            } catch { note = error.localizedDescription }
+            } catch {
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }   // (more was typed)
+                note = error.localizedDescription
+            }
         }
     }
 }
@@ -288,7 +316,7 @@ struct TVDetail: View {
         let se = info["se"] as? Int
         let ep = info["ep"] as? Int
         ZStack(alignment: .topLeading) {
-            TVPic(path: isEp ? (nz(info["thumb"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Primary")
+            TVPic(path: info.isEmpty ? nil : isEp ? (nz(info["thumb"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Primary")
                           : (nz(info["backdrop"] as? String) ?? nz(info["series_backdrop"] as? String) ?? "/api/play/img/\(id)/Backdrop"))
                 .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
                 .overlay(TVFade(look: look))
@@ -310,6 +338,7 @@ struct TVDetail: View {
                     buttons
                     if let o = info["overview"] as? String, !o.isEmpty {
                         Text(o).font(sz.f(28)).lineLimit(look.low ? nil : 5).frame(maxWidth: 1250, alignment: .leading)
+                            .focusable()                // (so the remote can scroll down to the end of a long one)
                     }
                     if !seasons.isEmpty { seasonsPart }
                 }
@@ -321,6 +350,11 @@ struct TVDetail: View {
         .background(look.bg.ignoresSafeArea())
         .foregroundStyle(look.fg)
         .task { await load() }
+        // back from the player: where she is now (resume points, watched marks) - "resume" is also asked of the PC
+        // when playing, so a place saved since the page loaded is still used
+        .onReceive(model.video.$shown.removeDuplicates()) { sh in
+            if !sh && item != nil { Task { await load(); await loadEpisodes() } }
+        }
     }
 
     @ViewBuilder private var buttons: some View {
@@ -328,14 +362,14 @@ struct TVDetail: View {
         let sz = TVSize(model)
         HStack(spacing: 30) {
             if let it = item, it.type == "Episode" || it.type == "Movie" {
-                Button { model.video.start(it, resume: it.canResume) } label: {
+                Button { model.video.start(it, resume: true) } label: {
                     Label(it.canResume ? "Resume from \(it.resume ?? "")" : "Play", systemImage: "play.fill").font(sz.f(30, .semibold)).tvLabel(look)
                 }
                 if it.canResume {
                     Button { model.video.start(it, resume: false) } label: { Text("Start over").font(sz.f(30, .semibold)).tvLabel(look) }
                 }
             } else if let n = nextUp {
-                Button { model.video.start(n, resume: n.canResume) } label: {
+                Button { model.video.start(n, resume: true) } label: {
                     Label((n.canResume ? "Resume " : "Play ") + n.label, systemImage: "play.fill").font(sz.f(30, .semibold)).lineLimit(1).tvLabel(look)
                 }
             }
@@ -345,6 +379,7 @@ struct TVDetail: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
     }
 
@@ -363,12 +398,13 @@ struct TVDetail: View {
             }
             .padding(.vertical, 16)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 44) {
                 ForEach(episodes) { e in
                     Button {
-                        if let it = episodeItems[e.id] { model.video.start(it, resume: it.canResume) }
+                        if let it = episodeItems[e.id] { model.video.start(it, resume: true) }
                     } label: {
                         TVPic(path: nz(e.thumb) ?? "/api/play/img/\(e.id)/Primary")
                             .frame(width: 420, height: 236).clipped()
@@ -431,9 +467,29 @@ struct TVDetail: View {
 
     private func loadEpisodes() async {
         guard let api = model.api, !season.isEmpty else { return }
-        guard let d = try? await api.raw("api/play/list", ["kind": "episodes", "parent": season]) else { return }
+        let want = season
+        guard let d = try? await api.raw("api/play/list", ["kind": "episodes", "parent": want]) else { return }
+        guard want == season else { return }                 // (another season was picked meanwhile)
         episodes = (try? JSONDecoder().decode(CardsResponse.self, from: d).items) ?? []
         let its = (try? JSONDecoder().decode(ItemsResponse.self, from: d).items) ?? []
         episodeItems = Dictionary(its.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+}
+
+/// The PC couldn't be reached: what went wrong, and a button to try again.
+struct TVRetry: View {
+    @EnvironmentObject var model: AppModel
+    let text: String
+    let again: () -> Void
+    var body: some View {
+        let look = Look.of(model)
+        let sz = TVSize(model)
+        VStack(alignment: .leading, spacing: 24) {
+            Text(text).font(sz.f(32))
+            Button(action: again) { Label("Try again", systemImage: "arrow.clockwise").font(sz.f(30, .semibold)).tvLabel(look) }
+        }
+        .padding(80)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusSection()
     }
 }

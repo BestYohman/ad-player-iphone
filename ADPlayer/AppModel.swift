@@ -15,7 +15,9 @@ final class AppModel: ObservableObject {
     nonisolated static let phoneID = "__local"
     nonisolated static let phoneName = "This phone - just the audio"
 
-    @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? ""
+    @Published var server: String = UserDefaults.standard.string(forKey: "server") ?? "" {
+        didSet { if oldValue != server && video.active { video.stop(saving: false) } }   // (another PC: this one's video ends)
+    }
     @Published var devices: [Device] = []
     @Published var otherDevices: [String] = []
     @Published var pairing: Device?
@@ -53,7 +55,9 @@ final class AppModel: ObservableObject {
             if let o = me?.sightOpts, let d = try? JSONEncoder().encode(o) { UserDefaults.standard.set(d, forKey: "sightOpts") }
         }
     }
-    @Published var needSignIn = false
+    @Published var needSignIn = false {
+        didSet { if needSignIn && video.active { video.stop() } }     // (the sign-in page replaces the player: the video mustn't go on behind it)
+    }
     /// The address in use now: the PC's home-network address on the home Wi-Fi, otherwise the one typed in.
     @Published var activeAddress = ""
 
@@ -70,9 +74,19 @@ final class AppModel: ObservableObject {
 
     /// "none" (the audio-only layout), "low" (big and high contrast) or "full" (posters and rows). Until the PC answers:
     /// the last answer; an older PC that doesn't know about it: the audio-only layout, as before.
+    #if os(tvOS)
+    /// The TV keeps its own choice (low or full vision), so changing it here doesn't change the phone's layout.
+    /// Until it's chosen here: low vision if that's the account's choice, otherwise full.
+    var sight: String {
+        if let v = UserDefaults.standard.string(forKey: "tvSight") { return v }
+        return (me?.sight ?? UserDefaults.standard.string(forKey: "sight")) == "low" ? "low" : "full"
+    }
+    var sightChosen: Bool { true }
+    #else
     var sight: String { me?.sight ?? UserDefaults.standard.string(forKey: "sight") ?? "none" }
     /// An older PC doesn't ask (it couldn't keep the answer); nor while it hasn't answered yet.
     var sightChosen: Bool { me?.sight == nil || me?.sightChosen != false }
+    #endif
     /// The PC keeps how she sees the screen (so it can be changed here).
     var sightKnown: Bool { me?.sight != nil }
     var low: Bool { sight == "low" }
@@ -89,6 +103,17 @@ final class AppModel: ObservableObject {
 
     func sightSave(_ form: [String: String], said: String) {
         guard let api = api else { return }
+        var form = form
+        #if os(tvOS)
+        if let v = form.removeValue(forKey: "sight") {       // (the TV's own choice: the account's stays as it is)
+            objectWillChange.send()
+            UserDefaults.standard.set(v, forKey: "tvSight")
+            if form.isEmpty {
+                if !videoOK && video.active { video.stop() }
+                say(said); return
+            }
+        }
+        #endif
         if var m = me, var o = m.sightOpts {          // shown straight away (VoiceOver reads the new value)
             for (k, v) in form {
                 switch k {
@@ -151,7 +176,9 @@ final class AppModel: ObservableObject {
             self.soundIdle()
             Task { await self.loadContinueBooks() }
         }
-        setUpRemoteControls()
+        #if !os(tvOS)
+        setUpRemoteControls()                  // (the TV's remote goes to the video player itself)
+        #endif
         setUpSoundEvents()
         restoreNowPlaying()
         Offline.shared.api = { [weak self] in self?.api }
@@ -183,7 +210,9 @@ final class AppModel: ObservableObject {
             self.phone.networkBack(); self.book.networkBack()
             if let api = self.api { await Places.flush(api) }
             self.flushSignOuts()
-            Offline.shared.resume()
+            #if !os(tvOS)
+            Offline.shared.resume()            // (the TV has no downloads)
+            #endif
         }
     }
 
@@ -894,7 +923,9 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        #if !os(tvOS)
         Offline.shared.resume()
+        #endif
         if api != nil && Date().timeIntervalSince(lastRefresh) > 30 {
             Task {
                 await self.chooseAddress()

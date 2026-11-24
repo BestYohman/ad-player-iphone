@@ -560,6 +560,9 @@ final class Together: ObservableObject {
     // MARK: invitations
 
     func pollInvites() async {
+        #if os(tvOS)
+        invites = []; return                 // (the TV doesn't join from invitations: it hands playing together to a phone)
+        #endif
         guard !active, let api = api, model?.needSignIn == false else { invites = []; return }
         guard let r = try? await api.get("api/play/together/list", ["cid": cid], as: InvitesResponse.self) else { return }
         guard !active else { return }

@@ -27,6 +27,10 @@ struct TVPlayerController: UIViewControllerRepresentable {
     @ObservedObject var video: VideoModel
     let tracks: [TrackList.Track]
 
+    /// What the menu was last made from: it's made again only when that changes (making it while it's open closes it).
+    final class Coordinator { var menuKey = "" }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let c = AVPlayerViewController()
         c.player = video.player
@@ -36,6 +40,9 @@ struct TVPlayerController: UIViewControllerRepresentable {
     func updateUIViewController(_ c: AVPlayerViewController, context: Context) {
         if c.player !== video.player { c.player = video.player }
         let v = video
+        let key = tracks.map { "\($0.index ?? -1):\($0.label)" }.joined(separator: "|") + "#\(v.aidx ?? -9)#\(v.stats)"
+        if key != context.coordinator.menuKey {
+        context.coordinator.menuKey = key
         var items: [UIMenuElement] = []
         let choices: [UIAction] = tracks.compactMap { t in
             guard let i = t.index else { return nil }
@@ -53,6 +60,7 @@ struct TVPlayerController: UIViewControllerRepresentable {
             }
         })
         c.transportBarCustomMenuItems = items
+        }
         // the name in the player's info panel
         if let it = c.player?.currentItem, !v.title.isEmpty,
            (it.externalMetadata.first { $0.identifier == .commonIdentifierTitle }?.stringValue) != v.title {
