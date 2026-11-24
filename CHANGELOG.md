@@ -3,6 +3,9 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.11.2 - 2026-11-24
+- **Server settings:** whoever runs the AD Player Server (its admins, and the people picked in its Settings) has Server settings in Settings. It opens the server's own page inside the app - AD files, the queue, people and the settings - already signed in.
+
 ## 1.11.1 - 2026-11-23
 - **Settings:** "Settings" inside the Settings tab is now called "The PC and downloads" (it no longer opens a page inside a page).
 - **The audio-only layout's Settings** has How you see the screen, to change to low or full vision from there.
