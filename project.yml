@@ -14,8 +14,8 @@ targets:
       path: ADPlayer/Info.plist
       properties:
         CFBundleDisplayName: AD Player
-        CFBundleShortVersionString: "1.11.0"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "1.11.1"
+        CFBundleVersion: "10"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -58,8 +58,8 @@ targets:
       path: ADPlayerTV/Info.plist
       properties:
         CFBundleDisplayName: AD Player
-        CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.1"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
         NSLocalNetworkUsageDescription: AD Player connects to your media PC at home to play shows and movies with audio description.

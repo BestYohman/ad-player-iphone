@@ -3,6 +3,11 @@
 Each version below is a release on GitHub (Releases, "v1.5.3" and so on). The newest is also "AD Player (latest)".
 Install with Sideloadly.
 
+## 1.11.1 - 2026-11-23
+- **Settings:** "Settings" inside the Settings tab is now called "The PC and downloads" (it no longer opens a page inside a page).
+- **The audio-only layout's Settings** has How you see the screen, to change to low or full vision from there.
+- **Fixes:** the video stops when the app goes to the sign-in or to another PC; starting a video and then pressing Stop quickly no longer starts it anyway; the sound is let go when the video stops.
+
 ## 1.11.0 - 2026-11-23
 - **Settings** (with a gear) instead of You, in the tabs at the bottom.
 - **A movie's, show's or episode's page:** the picture at the top fades into the page. An episode's picture is the one from that episode, and its show and its season and episode are bold above its name (not again at the top of the screen).
